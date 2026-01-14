@@ -1,4 +1,4 @@
-## 1. List devices
+## List devices
 
 ```bash
 adb devices -l
@@ -9,13 +9,13 @@ output: List of devices attached
 
 👉 First column (2285d50b40047ece) is serial/ID.
 
-## 2. Send request for special device
+## Send request for special device
 
 ```bash
-adb -s <serial/ID> shell monkey -p org.mozilla.firefox -c android.intent.category.LAUNCHER 1
+adb -s <serial_id> shell monkey -p org.mozilla.firefox -c android.intent.category.LAUNCHER 1
 ```
 
-## 3. Connect wireless
+## Connect wireless
 
 ##### Android < 11 or not use Wireless debugging
 
@@ -44,7 +44,7 @@ adb connect 192.168.1.43:5555
 - (a) Pair (use PAIR_PORT)
 
 ```bash
-adb pair 192.168.1.50:47123 #Replace pairing code on android
+adb pair 192.168.1.50:47123 # Replace pairing code on android
 ```
 
 - (b) Connect (use IP address & port)
@@ -59,4 +59,37 @@ adb devices
 ```bash
 192.168.1.50:37099 device
 scrcpy -s 192.168.1.50:37099
+```
+
+## Push data to device
+
+```bash
+adb -s <serial_id> push <file_path> /sdcard/Download/<file_name>
+```
+
+## ADB Keyboard
+
+Install Keyboard APK
+
+```bash
+adb -s <serial_id> install -r keyboard.apk
+```
+
+Get available
+
+```bash
+adb -s <serial_id> shell ime list -s
+```
+
+Enable keyboard to IME
+
+```bash
+adb -s <serial_id> shell ime enable com.android.adbkeyboard/.AdbIME
+adb -s <serial_id> shell ime set com.android.adbkeyboard/.AdbIME
+```
+
+Send text
+
+```bash
+adb -s 2285d50b40047ece shell am broadcast -a ADB_INPUT_B64 --es msg "<base64_text>"
 ```

@@ -1,15 +1,28 @@
 import subprocess, time
 
-def run_adb(serial, args, check=False):
+def run_adb(serial, args, input_text=None, check=False):
     cmd = ["adb", "-s", serial] + args
-    return subprocess.run(cmd, text=True, check=check)
+    return subprocess.run(cmd, input=input_text, text=True, check=check, capture_output=True)
 
 def tap(serial, x, y):
     run_adb(serial, ["shell", "input", "tap", str(x), str(y)])
 
-def text(serial, t):
-    safe = t.replace(" ", "%s")
-    run_adb(serial, ["shell", "input", "text", safe])
+def adb(serial, *args, check=True):
+    return subprocess.run(
+        ["adb", "-s", serial, *args],
+        check=check,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+def setup_adb_keyboard(
+    serial: str,
+    apk_path: str = "keyboard.apk",
+    ime: str = "com.android.adbkeyboard/.AdbIME"
+):
+    adb(serial, "install", "-r", apk_path)
+    adb(serial, "shell", "ime", "enable", ime)
+    adb(serial, "shell", "ime", "set", ime)
 
 def open_firefox(serial):
     run_adb(serial, [
@@ -26,22 +39,6 @@ def open_url_in_firefox(serial, url):
         "-d", url
     ])
 
-def get_model(serial):
-    out = subprocess.check_output(
-        ["adb", "-s", serial, "shell", "getprop", "ro.product.model"],
-        text=True
-    ).strip()
-    return out
-
-def get_devices():
-    result = subprocess.check_output(["adb", "devices"], text=True)
-    lines = result.strip().splitlines()[1:]
-    devices = []
-    for line in lines:
-        if "\tdevice" in line:
-            devices.append(line.split("\t")[0])
-    return devices
-
 def install_cookie_extension(serial):
     open_url_in_firefox(serial, "https://addons.mozilla.org/firefox/addon/cookie-editor")
     time.sleep(3)
@@ -51,7 +48,7 @@ def install_cookie_extension(serial):
     time.sleep(2)
     tap(serial, 901, 1963)
 
-def import_cookie(serial):
+def import_cookie(serial, cookie_path):
     open_url_in_firefox(serial, "https://tiktok.com/profile")
     time.sleep(2)
     tap(serial, 1007, 157)
@@ -61,32 +58,23 @@ def import_cookie(serial):
     tap(serial, 406, 1984)
     time.sleep(1)
     tap(serial, 680, 1981)
+    time.sleep(1)
 
-    # After paste value -> click import
-    # tap(serial, 817, 1104)
+    from helpers.file import read_file
+    cookie_data = read_file(cookie_path)
+    time.sleep(0.5)
 
-def run_flow(serial):
-    model = get_model(serial)
-    print(f"🚀 Running on {serial} ({model})")
+    from utils.text import extract_tiktok_cookies, to_base64
+    filtered = extract_tiktok_cookies(cookie_data)
+    time.sleep(0.5)
+    b64_filtered = to_base64(filtered)
+    tap(serial, 83, 842)
+    time.sleep(0.5)
 
-    open_firefox(serial)
-    time.sleep(2)
+    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64_filtered])
+    time.sleep(1)
 
-    install_cookie_extension(serial)
-    time.sleep(2)
+    tap(serial, 817, 1920)
+    time.sleep(1)
 
-    import_cookie(serial)
-    time.sleep(2)
-
-# if __name__ == "__main__":
-#     devices = get_devices()
-
-#     if not devices:
-#         print("❌ No authorized devices found (check USB debugging / allow prompt).")
-#     else:
-#         print(f"✅ Found {len(devices)} devices:")
-#         for d in devices:
-#             print(" -", d)
-
-#         for d in devices:
-#             run_flow(d)
+    open_url_in_firefox(serial, "https://tiktok.com/profile")
