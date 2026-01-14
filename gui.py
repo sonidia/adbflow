@@ -1,7 +1,7 @@
 import sys, os, shutil, subprocess, time
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QFileDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QHBoxLayout, QMenu
 from PySide6.QtCore import QTimer, QPoint
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from helpers.csv import CSVHelper
 from main import open_firefox, install_cookie_extension, import_cookie, setup_adb_keyboard
 
@@ -9,6 +9,7 @@ class CookieLoaderGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.app_name = "App"
+        self.icon = "icon.png"
         self.cookies_folder = "cookies"
         self.data_csv = "data.csv"
         self.status_timer = QTimer()
@@ -19,6 +20,7 @@ class CookieLoaderGUI(QWidget):
     def initUI(self):
         self.setWindowTitle(self.app_name)
         self.setGeometry(300, 300, 800, 600)
+        app.setWindowIcon(QIcon(self.icon))
 
         layout = QVBoxLayout()
         button_layout = QHBoxLayout()

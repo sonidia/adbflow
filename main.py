@@ -1,8 +1,11 @@
 import subprocess, time
 
+si = subprocess.STARTUPINFO()
+si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
 def run_adb(serial, args, input_text=None, check=False):
     cmd = ["adb", "-s", serial] + args
-    return subprocess.run(cmd, input=input_text, text=True, check=check, capture_output=True)
+    return subprocess.run(cmd, input=input_text, text=True, check=check, capture_output=True, startupinfo=si)
 
 def tap(serial, x, y):
     run_adb(serial, ["shell", "input", "tap", str(x), str(y)])
@@ -10,6 +13,7 @@ def tap(serial, x, y):
 def adb(serial, *args, check=True):
     return subprocess.run(
         ["adb", "-s", serial, *args],
+        startupinfo=si,
         check=check,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
@@ -71,7 +75,7 @@ def import_cookie(serial, cookie_path):
     tap(serial, 83, 842)
     time.sleep(0.5)
 
-    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64_filtered])
+    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64_filtered], startupinfo=si)
     time.sleep(1)
 
     tap(serial, 817, 1920)

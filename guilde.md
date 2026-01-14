@@ -31,7 +31,7 @@ adb connect 192.168.1.43:5555
 
 - (a) Pair device with pairing code
 
-  - Bấm vào đó → nó hiện:
+  - Click will see
   - IP:PAIR_PORT (ví dụ 192.168.1.50:47123)
   - Pairing code
 

@@ -1,84 +1,192 @@
-# Mobile Cookie Import Tool
+# Auto Cookie Importer for Mobile
 
-Công cụ GUI để quản lý cookie files và thao tác với file CSV cho mobile automation.
+A comprehensive GUI tool for mobile automation that manages cookie files and performs automated TikTok cookie importing on Android devices using ADB.
 
-## Files trong project:
+## Features
 
-### `gui.py` - Giao diện chính
+- **GUI Interface**: PySide6-based desktop application for easy cookie management
+- **Automated Cookie Import**: Automated workflow to import TikTok cookies into Firefox on mobile devices
+- **Device Management**: Automatic detection and management of connected Android devices
+- **CSV Data Management**: Built-in CSV helper utilities for data manipulation
+- **ADB Integration**: Full ADB command integration for device control
+- **Build Tools**: PyInstaller build scripts for creating executables
+- **Installer**: Automated setup script for ADB and scrcpy tools
 
-GUI PySide6 với các tính năng:
+## Project Structure
 
-- **Load Cookie Button**: Upload file .txt vào thư mục `/cookies`
-- **Refresh Table Button**: Cập nhật bảng hiển thị dữ liệu CSV
-- **CSV Table**: Hiển thị thông tin chi tiết với 4 cột:
-  - **Model**: Model thiết bị tương ứng
-  - **Serial**: ID thiết bị từ ADB
-  - **Username**: Username được detect từ tên file cookie
-  - **Cookie File**: Tên file cookie trong thư mục `/cookies`
+### Core Files
 
-### `helpers/csv.py` - Module tiện ích CSV
+- **`main.py`** - Main automation logic for ADB operations and cookie importing
+- **`gui.py`** - PySide6 GUI application for cookie management and device control
+- **`data.csv`** - CSV file containing device serials and cookie file mappings
 
-Class `CSVHelper` với các phương thức:
+### Helper Modules
 
-#### Đọc dữ liệu:
+- **`helpers/csv.py`** - CSV file manipulation utilities
+- **`helpers/file.py`** - File reading and processing utilities
+- **`utils/text.py`** - Text processing utilities for cookie extraction
 
-- `read_csv(file_path, delimiter=',')` - Đọc toàn bộ file CSV
-- `read_row(file_path, row_index, delimiter=',')` - Đọc một hàng cụ thể
-- `read_column(file_path, col_index, delimiter=',')` - Đọc một cột cụ thể
-- `get_cell(file_path, row_index, col_index, delimiter=',')` - Đọc một ô cụ thể
+### Build & Installation
 
-#### Ghi dữ liệu:
+- **`build.bat`** - Windows batch script to build executable using PyInstaller
+- **`installer.bat`** - Automated installer for ADB and scrcpy tools
+- **`build.spec`** - PyInstaller specification file
+- **`requirements.txt`** - Python dependencies
 
-- `write_csv(file_path, data, delimiter=',')` - Ghi toàn bộ dữ liệu vào CSV
-- `write_row(file_path, row_index, row_data, delimiter=',')` - Ghi một hàng
-- `write_column(file_path, col_index, col_data, delimiter=',')` - Ghi một cột
-- `append_row(file_path, row_data, delimiter=',')` - Thêm hàng mới
-- `update_cell(file_path, row_index, col_index, value, delimiter=',')` - Cập nhật một ô
+## Installation
 
-#### Thông tin file:
+### Prerequisites
 
-- `get_csv_shape(file_path, delimiter=',')` - Lấy kích thước (số hàng, số cột)
+- Python 3.8+
+- Android device with USB debugging enabled
+- ADB (Android Debug Bridge) - automatically installed via `installer.bat`
 
-### `index.py` - Logic automation
+### Setup Steps
 
-Script ADB để tự động import cookie vào Firefox trên mobile device.
+1. **Clone the repository:**
 
-### `data.csv` - File dữ liệu
+   ```bash
+   git clone https://github.com/sonic-media/auto-mobile.git
+   cd auto-mobile
+   ```
 
-Chứa thông tin device serial và đường dẫn cookie files.
+2. **Install Python dependencies:**
 
-## Cách sử dụng:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-1. **Chạy GUI**: `python gui.py`
-2. **Upload cookie**: Click "Load Cookie" để chọn file .txt
-3. **Xem dữ liệu**: Click "Refresh Table" để cập nhật bảng với:
-   - Model và Serial của thiết bị kết nối
-   - Username được detect từ tên file
-   - Danh sách file cookie
+3. **Install ADB and scrcpy (Windows):**
 
-## Ví dụ sử dụng CSVHelper:
+   ```bash
+   installer.bat
+   ```
+
+   This will download and install ADB and scrcpy to `C:\android-tools\`
+
+4. **Restart your command prompt** to refresh the PATH environment variable.
+
+## Usage
+
+### GUI Application
+
+1. **Launch the GUI:**
+
+   ```bash
+   python gui.py
+   ```
+
+2. **Load Cookies:**
+
+   - Click "Load Cookie" to select and upload `.txt` cookie files
+   - Files are automatically copied to the `cookies/` directory
+
+3. **Refresh Device Data:**
+
+   - Click "Refresh data" to scan connected devices and update the table
+   - Displays device model, serial, username, and associated cookie files
+
+4. **Setup ADB Keyboard:**
+
+   - Click "Setup Keyboard" to install ADB keyboard on all connected devices
+   - Required for automated text input
+
+5. **Start Automation:**
+   - Click "Start All" to begin the automated cookie import process for all devices
+
+### Manual ADB Setup
+
+Before using the automation, ensure your device is properly connected:
+
+```bash
+# Enable TCP/IP mode on device
+adb tcpip 5555
+
+# Connect via WiFi (replace with your device IP)
+adb connect 192.168.1.100:5555
+```
+
+## CSV Helper Usage
+
+The `CSVHelper` class provides comprehensive CSV manipulation:
 
 ```python
 from helpers.csv import CSVHelper
 
-# Đọc toàn bộ file
+# Read operations
 data = CSVHelper.read_csv('data.csv')
-
-# Đọc hàng đầu tiên
 row = CSVHelper.read_row('data.csv', 0)
-
-# Đọc cột đầu tiên
 column = CSVHelper.read_column('data.csv', 0)
+cell = CSVHelper.get_cell('data.csv', 0, 1)
 
-# Ghi dữ liệu mới
-CSVHelper.write_csv('data.csv', [['Device', 'Cookie'], ['ABC123', 'path/to/cookie.txt']])
+# Write operations
+CSVHelper.write_csv('data.csv', [['Device', 'Cookie'], ['ABC123', 'cookie.txt']])
+CSVHelper.append_row('data.csv', ['NEW_DEVICE', 'new_cookie.txt'])
+CSVHelper.update_cell('data.csv', 1, 1, 'updated_cookie.txt')
 
-# Cập nhật ô cụ thể
-CSVHelper.update_cell('data.csv', 1, 1, 'new_cookie.txt')
+# File information
+rows, cols = CSVHelper.get_csv_shape('data.csv')
 ```
 
-## Yêu cầu:
+## Building Executable
 
-- Python 3.x
-- PySide6: `pip install PySide6`
-- ADB (cho mobile automation)
+To create a standalone executable:
+
+```bash
+build.bat
+```
+
+This will generate:
+
+- `dist/gui.exe` - Main GUI executable
+- `dist/main.exe` - Command-line automation tool
+
+## Automation Flow
+
+The automation performs the following steps for each device:
+
+1. **Firefox Setup**: Opens Firefox and installs the Cookie Editor extension
+2. **Cookie Import**: Navigates to TikTok profile page and imports cookies
+3. **Text Input**: Uses ADB keyboard for automated text entry
+4. **Verification**: Opens profile page to verify successful import
+
+## Requirements
+
+- Python 3.8 or higher
+- PySide6 >= 6.0.0
+- PyInstaller >= 6.0.0 (for building)
+- Android device with Firefox installed
+- USB debugging enabled on device
+- ADB (automatically installed via installer)
+
+## Troubleshooting
+
+### Common Issues
+
+1. **ADB not found**: Run `installer.bat` and restart your command prompt
+2. **Device not detected**: Ensure USB debugging is enabled and device is authorized
+3. **Firefox not opening**: Verify Firefox is installed on the device
+4. **Cookie import fails**: Check cookie file format and Firefox extension installation
+
+### Device Connection
+
+```bash
+# Check connected devices
+adb devices
+
+# Restart ADB server
+adb kill-server
+adb start-server
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
