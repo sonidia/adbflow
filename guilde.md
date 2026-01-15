@@ -29,28 +29,27 @@ adb connect 192.168.1.43:5555
 
 1. On Android: Settings → Developer options → Wireless debugging → ON
 
-- (a) Pair device with pairing code
+- Pair device with pairing code
 
-  - Click will see
+  - Click will see pairing code
   - IP:PAIR_PORT (ví dụ 192.168.1.50:47123)
-  - Pairing code
 
-- (b) IP address & port
+- IP address & port
   - At Wireless debugging has line:
   - IP address & port (ví dụ 192.168.1.50:37099)
 
 2. On PC:
 
-- (a) Pair (use PAIR_PORT)
+- Pair (use PAIR_PORT)
 
 ```bash
-adb pair 192.168.1.50:47123 # Replace pairing code on android
+adb pair 192.168.1.50:47123 # Replace with pairing code from android
 ```
 
-- (b) Connect (use IP address & port)
+- Connect (use IP address & port)
 
 ```bash
-adb connect 192.168.1.50:37099
+adb connect 192.168.1.50:37099 # Replace with IP address & port from android
 adb devices
 ```
 

@@ -1,26 +1,104 @@
-import sys, os, shutil, subprocess, time
+import sys, os, shutil, subprocess
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QFileDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QHBoxLayout, QMenu
-from PySide6.QtCore import QTimer, QPoint
+from PySide6.QtCore import QTimer, QPoint, QThread, Signal
 from PySide6.QtGui import QAction, QIcon
 from helpers.csv import CSVHelper
 from main import open_firefox, install_cookie_extension, import_cookie, setup_adb_keyboard
 
+class Worker(QThread):
+    progress = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, task_type, table_data=None, settings=None):
+        super().__init__()
+        self.task_type = task_type
+        self.table_data = table_data
+        self.settings = settings or {}
+
+    def run(self):
+        try:
+            if self.task_type == "start_all":
+                self.start_all_flows()
+            elif self.task_type == "setup_keyboard":
+                self.setup_keyboard_for_all()
+        except Exception as e:
+            self.finished.emit(f'Error: {str(e)}')
+
+    def start_all_flows(self):
+        row_count = len(self.table_data)
+        if row_count == 0:
+            self.finished.emit('No devices found in table')
+            return
+
+        successful_devices = 0
+        for row in range(row_count):
+            serial = self.table_data[row].get('serial', '')
+            cookie_path = self.table_data[row].get('cookie_path', '')
+
+            if not cookie_path:
+                self.progress.emit(f'Row {row}: missing cookie path')
+                continue
+
+            if serial:
+                try:
+                    self.progress.emit(f'Processing device: {serial}')
+
+                    if self.settings.get('open_firefox', True):
+                        open_firefox(serial)
+
+                    if self.settings.get('install_cookie', True):
+                        install_cookie_extension(serial)
+
+                    if self.settings.get('import_cookie', True):
+                        import_cookie(serial, cookie_path)
+
+                    successful_devices += 1
+                    self.progress.emit(f'✅ Completed flow for device: {serial}')
+                except Exception as e:
+                    self.progress.emit(f'❌ Error processing device {serial}: {str(e)}')
+
+        self.finished.emit(f'Successfully processed {successful_devices} out of {row_count} devices')
+
+    def setup_keyboard_for_all(self):
+        row_count = len(self.table_data)
+        if row_count == 0:
+            self.finished.emit('No devices found in table')
+            return
+
+        successful_devices = 0
+        for row in range(row_count):
+            serial = self.table_data[row].get('serial', '')
+
+            if serial:
+                try:
+                    self.progress.emit(f'Setting up keyboard for: {serial}')
+                    setup_adb_keyboard(serial)
+                    successful_devices += 1
+                    self.progress.emit(f'✅ Setup keyboard for device: {serial}')
+                except Exception as e:
+                    self.progress.emit(f'❌ Error setting up keyboard for device {serial}: {str(e)}')
+
+        self.finished.emit(f'Successfully setup keyboard for {successful_devices} out of {row_count} devices')
+
 class CookieLoaderGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.app_name = "App"
+        self.app_name = "Adbflow"
         self.icon = "icon.png"
         self.cookies_folder = "cookies"
         self.data_csv = "data.csv"
         self.status_timer = QTimer()
         self.status_timer.setSingleShot(True)
         self.status_timer.timeout.connect(self.reset_window_title)
+
+        self.worker = None
+
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle(self.app_name)
         self.setGeometry(300, 300, 800, 600)
-        app.setWindowIcon(QIcon(self.icon))
+        self.setWindowIcon(QIcon(self.icon))
 
         layout = QVBoxLayout()
         button_layout = QHBoxLayout()
@@ -208,69 +286,71 @@ class CookieLoaderGUI(QWidget):
             print(f"Error details: {e}")
 
     def start_all_flows(self):
-        try:
-            row_count = self.table.rowCount()
-            if row_count == 0:
-                self.update_status('No devices found in table')
-                return
+        if self.worker and self.worker.isRunning():
+            self.update_status('Task already running')
+            return
 
-            successful_devices = 0
-            for row in range(row_count):
-                serial_item = self.table.item(row, 1)
-                cookie_path_item = self.table.item(row, 3)
-                if not cookie_path_item or not cookie_path_item.text():
-                    self.update_status(f'Row {row}: missing cookie path')
-                    continue
-                if serial_item and serial_item.text():
-                    serial = serial_item.text()
-                    try:
-                        if self.open_firefox_action.isChecked():
-                            open_firefox(serial)
-                            time.sleep(2)
+        table_data = []
+        row_count = self.table.rowCount()
+        for row in range(row_count):
+            serial_item = self.table.item(row, 1)
+            cookie_path_item = self.table.item(row, 3)
+            serial = serial_item.text() if serial_item else ""
+            cookie_path = cookie_path_item.text() if cookie_path_item else ""
+            table_data.append({
+                'serial': serial,
+                'cookie_path': cookie_path
+            })
 
-                        if self.install_cookie_action.isChecked():
-                            install_cookie_extension(serial)
-                            time.sleep(2)
+        self.disable_buttons()
 
-                        if self.import_cookie_action.isChecked():
-                            import_cookie(serial, cookie_path_item.text() if cookie_path_item else "")
-                            time.sleep(2)
+        settings = {
+            'open_firefox': self.open_firefox_action.isChecked(),
+            'install_cookie': self.install_cookie_action.isChecked(),
+            'import_cookie': self.import_cookie_action.isChecked()
+        }
+        self.worker = Worker("start_all", table_data, settings)
+        self.worker.progress.connect(self.update_status)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.start()
 
-                        successful_devices += 1
-                        print(f"✅ Completed flow for device: {serial}")
-                    except Exception as e:
-                        print(f"❌ Error processing device {serial}: {str(e)}")
+    def on_worker_finished(self, message):
+        self.update_status(message)
+        self.enable_buttons()
+        self.worker = None
 
-            self.update_status(f'Successfully processed {successful_devices} out of {row_count} devices')
+    def disable_buttons(self):
+        self.load_button.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.setup_keyboard_button.setEnabled(False)
+        self.start_all_button.setEnabled(False)
 
-        except Exception as e:
-            self.update_status(f'Error starting flows: {str(e)}')
-            print(f"Error details: {e}")
+    def enable_buttons(self):
+        self.load_button.setEnabled(True)
+        self.refresh_button.setEnabled(True)
+        self.setup_keyboard_button.setEnabled(True)
+        self.start_all_button.setEnabled(True)
 
     def setup_keyboard_for_all(self):
-        try:
-            row_count = self.table.rowCount()
-            if row_count == 0:
-                self.update_status('No devices found in table')
-                return
+        if self.worker and self.worker.isRunning():
+            self.update_status('Task already running')
+            return
 
-            successful_devices = 0
-            for row in range(row_count):
-                serial_item = self.table.item(row, 1)
-                if serial_item and serial_item.text():
-                    serial = serial_item.text()
-                    try:
-                        setup_adb_keyboard(serial)
-                        successful_devices += 1
-                        print(f"✅ Setup keyboard for device: {serial}")
-                    except Exception as e:
-                        print(f"❌ Error setting up keyboard for device {serial}: {str(e)}")
+        table_data = []
+        row_count = self.table.rowCount()
+        for row in range(row_count):
+            serial_item = self.table.item(row, 1)
+            serial = serial_item.text() if serial_item else ""
+            table_data.append({
+                'serial': serial
+            })
 
-            self.update_status(f'Successfully setup keyboard for {successful_devices} out of {row_count} devices')
+        self.disable_buttons()
 
-        except Exception as e:
-            self.update_status(f'Error setting up keyboard: {str(e)}')
-            print(f"Error details: {e}")
+        self.worker = Worker("setup_keyboard", table_data)
+        self.worker.progress.connect(self.update_status)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.start()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

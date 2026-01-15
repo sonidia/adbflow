@@ -1,4 +1,4 @@
-# Auto Cookie Importer for Mobile
+# Adbflow
 
 A comprehensive GUI tool for mobile automation that manages cookie files and performs automated TikTok cookie importing on Android devices using ADB.
 
@@ -104,28 +104,6 @@ adb tcpip 5555
 
 # Connect via WiFi (replace with your device IP)
 adb connect 192.168.1.100:5555
-```
-
-## CSV Helper Usage
-
-The `CSVHelper` class provides comprehensive CSV manipulation:
-
-```python
-from helpers.csv import CSVHelper
-
-# Read operations
-data = CSVHelper.read_csv('data.csv')
-row = CSVHelper.read_row('data.csv', 0)
-column = CSVHelper.read_column('data.csv', 0)
-cell = CSVHelper.get_cell('data.csv', 0, 1)
-
-# Write operations
-CSVHelper.write_csv('data.csv', [['Device', 'Cookie'], ['ABC123', 'cookie.txt']])
-CSVHelper.append_row('data.csv', ['NEW_DEVICE', 'new_cookie.txt'])
-CSVHelper.update_cell('data.csv', 1, 1, 'updated_cookie.txt')
-
-# File information
-rows, cols = CSVHelper.get_csv_shape('data.csv')
 ```
 
 ## Building Executable
