@@ -1,23 +1,30 @@
-import subprocess, time
+import subprocess, zipfile, tempfile, os, json, shutil
 
 si = subprocess.STARTUPINFO()
 si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-def run_adb(serial, args, input_text=None, check=False):
-    cmd = ["adb", "-s", serial] + args
-    return subprocess.run(cmd, input=input_text, text=True, check=check, capture_output=True, startupinfo=si)
-
-def tap(serial, x, y):
-    run_adb(serial, ["shell", "input", "tap", str(x), str(y)])
-
 def adb(serial, *args, check=True):
-    return subprocess.run(
+    result = subprocess.run(
         ["adb", "-s", serial, *args],
         startupinfo=si,
-        check=check,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        check=False,
+        capture_output=True,
+        text=True
     )
+    if check and result.returncode != 0:
+        err = (result.stderr or result.stdout or "unknown error").strip()
+        raise RuntimeError(err)
+    return result
+
+def adb_output(serial, *args):
+    result = subprocess.run(
+        ["adb", "-s", serial, *args],
+        startupinfo=si,
+        check=True,
+        capture_output=True,
+        text=True
+    )
+    return result.stdout.strip()
 
 def setup_adb_keyboard(
     serial: str,
@@ -28,57 +35,75 @@ def setup_adb_keyboard(
     adb(serial, "shell", "ime", "enable", ime)
     adb(serial, "shell", "ime", "set", ime)
 
-def open_firefox(serial):
-    run_adb(serial, [
-        "shell", "monkey",
-        "-p", "org.mozilla.firefox",
-        "-c", "android.intent.category.LAUNCHER",
-        "1"
-    ])
+def install_xapk(serial: str, xapk_path: str):
+    """
+    Install a .xapk or .apkm file to a device.
+    - XAPK (APKPure): manifest.json with "split_apks" list
+    - APKM (APKMirror): info.json with "pname", all split_*.apk + base.apk files
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="xapk_")
+    try:
+        # --- Extract archive ---
+        with zipfile.ZipFile(xapk_path, "r") as z:
+            z.extractall(tmp_dir)
 
-def open_url_in_firefox(serial, url):
-    run_adb(serial, [
-        "shell", "am", "start",
-        "-a", "android.intent.action.VIEW",
-        "-d", url
-    ])
+        package_name = None
+        split_apk_files = []
+        ext = os.path.splitext(xapk_path)[1].lower()
 
-def install_cookie_extension(serial):
-    open_url_in_firefox(serial, "https://addons.mozilla.org/firefox/addon/cookie-editor")
-    time.sleep(3)
-    tap(serial, 523, 1794)
-    time.sleep(2)
-    tap(serial, 871, 1958)
-    time.sleep(2)
-    tap(serial, 901, 1963)
+        if ext == ".apkm":
+            # --- APKM format (APKMirror): info.json, all .apk files are splits ---
+            info_path = os.path.join(tmp_dir, "info.json")
+            if os.path.isfile(info_path):
+                with open(info_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                package_name = data.get("pname") or data.get("package_name")
+            # Collect all .apk files (base.apk + split_*.apk)
+            for fname in os.listdir(tmp_dir):
+                if fname.lower().endswith(".apk"):
+                    split_apk_files.append(os.path.join(tmp_dir, fname))
 
-def import_cookie(serial, cookie_path):
-    open_url_in_firefox(serial, "https://tiktok.com/profile")
-    time.sleep(2)
-    tap(serial, 1007, 157)
-    tap(serial, 523, 1071)
-    tap(serial, 565, 359)
-    time.sleep(1)
-    tap(serial, 406, 1984)
-    time.sleep(1)
-    tap(serial, 680, 1981)
-    time.sleep(1)
+        else:
+            # --- XAPK format (APKPure): manifest.json with explicit split_apks list ---
+            manifest_path = os.path.join(tmp_dir, "manifest.json")
+            if os.path.isfile(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                package_name = data.get("package_name")
+                for entry in data.get("split_apks", []):
+                    fpath = os.path.join(tmp_dir, entry["file"])
+                    if os.path.isfile(fpath):
+                        split_apk_files.append(fpath)
 
-    from helpers.file import read_file
-    cookie_data = read_file(cookie_path)
-    time.sleep(0.5)
+        # Fallback: scan all .apk if still empty
+        if not split_apk_files:
+            for root, _, files in os.walk(tmp_dir):
+                for fname in files:
+                    if fname.lower().endswith(".apk"):
+                        split_apk_files.append(os.path.join(root, fname))
 
-    from utils.text import extract_tiktok_cookies, to_base64
-    filtered = extract_tiktok_cookies(cookie_data)
-    time.sleep(0.5)
-    b64_filtered = to_base64(filtered)
-    tap(serial, 83, 842)
-    time.sleep(0.5)
+        if not split_apk_files:
+            raise FileNotFoundError(f"No APK files found inside {xapk_path}")
 
-    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64_filtered], startupinfo=si)
-    time.sleep(1)
+        # --- Install split APKs ---
+        adb(serial, "install-multiple", "-r", *split_apk_files)
 
-    tap(serial, 817, 1920)
-    time.sleep(1)
+        # --- Push OBB files if any ---
+        for root, _, files in os.walk(tmp_dir):
+            for fname in files:
+                if fname.lower().endswith(".obb"):
+                    src = os.path.join(root, fname)
+                    remote_dir = f"/sdcard/Android/obb/{package_name}" if package_name else "/sdcard"
+                    adb(serial, "shell", "mkdir", "-p", remote_dir, check=False)
+                    adb(serial, "push", src, f"{remote_dir}/{fname}")
 
-    open_url_in_firefox(serial, "https://tiktok.com/profile")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+def install_chrome(serial: str, apk_path: str = "chrome.apkm"):
+    """Install Chrome — mặc định dùng chrome.apkm (Android 7.0+, SDK 24)."""
+    ext = os.path.splitext(apk_path)[1].lower()
+    if ext in (".xapk", ".apkm"):
+        install_xapk(serial, apk_path)
+    else:
+        adb(serial, "install", "-r", apk_path)
