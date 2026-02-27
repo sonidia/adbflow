@@ -8,6 +8,7 @@ from main import setup_adb_keyboard, install_chrome, open_url_in_chrome, run_ads
 class Worker(QThread):
     progress = Signal(str)
     finished = Signal(str)
+    row_result = Signal(int, str)  # (row_index, ads_info text)
 
     def __init__(self, task_type, table_data=None, settings=None):
         super().__init__()
@@ -104,7 +105,7 @@ class Worker(QThread):
             return
 
         successful_devices = 0
-        for row in self.table_data:
+        for idx, row in enumerate(self.table_data):
             serial = row.get('serial', '')
             ads_link = row.get('ads_link', '')
 
@@ -116,9 +117,13 @@ class Worker(QThread):
 
             try:
                 self.progress.emit(f'🤖 Running ads automation on: {serial}')
-                title = run_ads_automation(serial, ads_link)
+                result = run_ads_automation(serial, ads_link)
+                title = result.get('title', '') if isinstance(result, dict) else str(result)
+                domain = result.get('domain', '') if isinstance(result, dict) else ''
+                ads_info = f"{title} | {domain}" if domain else title
                 successful_devices += 1
-                self.progress.emit(f'✅ Done on {serial} — page: {title}')
+                self.progress.emit(f'✅ Done on {serial} — {ads_info}')
+                self.row_result.emit(row.get('row_index', idx), ads_info)
             except Exception as e:
                 self.progress.emit(f'❌ Error on device {serial}: {str(e)}')
 
@@ -182,8 +187,8 @@ class CookieLoaderGUI(QWidget):
         self.table = QTableWidget()
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(['Model', 'Serial', 'Ads Link'])
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(['Model', 'Serial', 'Ads Link', 'Ads Info'])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemChanged.connect(self.on_table_item_changed)
         right_layout.addWidget(self.table)
@@ -248,25 +253,29 @@ class CookieLoaderGUI(QWidget):
 
             self.table.blockSignals(True)
             self.table.setRowCount(num_rows)
-            self.table.setColumnCount(3)
+            self.table.setColumnCount(4)
 
             for row_idx in range(num_rows):
                 model = rows[row_idx][0] if len(rows[row_idx]) > 0 else ""
                 serial = rows[row_idx][1] if len(rows[row_idx]) > 1 else ""
                 ads_link = rows[row_idx][2] if len(rows[row_idx]) > 2 else ""
+                ads_info = rows[row_idx][3] if len(rows[row_idx]) > 3 else ""
 
                 model_item = QTableWidgetItem(model)
                 serial_item = QTableWidgetItem(serial)
                 ads_item = QTableWidgetItem(ads_link)
+                ads_info_item = QTableWidgetItem(ads_info)
 
-                # Model và Serial không cho edit trực tiếp
+                # Model, Serial và Ads Info không cho edit trực tiếp
                 non_editable = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
                 model_item.setFlags(non_editable)
                 serial_item.setFlags(non_editable)
+                ads_info_item.setFlags(non_editable)
 
                 self.table.setItem(row_idx, 0, model_item)
                 self.table.setItem(row_idx, 1, serial_item)
                 self.table.setItem(row_idx, 2, ads_item)
+                self.table.setItem(row_idx, 3, ads_info_item)
 
             self.table.resizeColumnsToContents()
             self.table.blockSignals(False)
@@ -285,14 +294,17 @@ class CookieLoaderGUI(QWidget):
             try:
                 existing = CSVHelper.read_csv(self.data_csv)
                 existing_links = {row[1]: row[2] for row in existing if len(row) > 2}
+                existing_info = {row[1]: row[3] for row in existing if len(row) > 3}
             except Exception:
                 existing_links = {}
+                existing_info = {}
 
             rows = []
             for device in devices:
                 serial = device["serial"]
                 ads_link = existing_links.get(serial, "")
-                rows.append([device["model"], serial, ads_link])
+                ads_info = existing_info.get(serial, "")
+                rows.append([device["model"], serial, ads_link, ads_info])
 
             CSVHelper.write_csv(self.data_csv, rows)
 
@@ -313,14 +325,39 @@ class CookieLoaderGUI(QWidget):
                 model = self.table.item(row_idx, 0)
                 serial = self.table.item(row_idx, 1)
                 ads = self.table.item(row_idx, 2)
+                ads_info = self.table.item(row_idx, 3)
                 rows.append([
                     model.text() if model else "",
                     serial.text() if serial else "",
                     ads.text() if ads else "",
+                    ads_info.text() if ads_info else "",
                 ])
             CSVHelper.write_csv(self.data_csv, rows)
         except Exception as e:
             print(f"Error saving ads link: {e}")
+
+    def on_row_result(self, row_idx: int, ads_info: str):
+        """Cập nhật cột Ads Info khi một device chạy xong."""
+        self.table.blockSignals(True)
+        item = QTableWidgetItem(ads_info)
+        non_editable = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        item.setFlags(non_editable)
+        self.table.setItem(row_idx, 3, item)
+        self.table.resizeColumnToContents(3)
+        self.table.blockSignals(False)
+        # Lưu CSV ngay
+        try:
+            rows = []
+            for r in range(self.table.rowCount()):
+                rows.append([
+                    self.table.item(r, 0).text() if self.table.item(r, 0) else "",
+                    self.table.item(r, 1).text() if self.table.item(r, 1) else "",
+                    self.table.item(r, 2).text() if self.table.item(r, 2) else "",
+                    self.table.item(r, 3).text() if self.table.item(r, 3) else "",
+                ])
+            CSVHelper.write_csv(self.data_csv, rows)
+        except Exception as e:
+            print(f"Error saving ads info: {e}")
 
     def on_worker_finished(self, message):
         self.update_status(message)
@@ -393,13 +430,14 @@ class CookieLoaderGUI(QWidget):
             ads_item = self.table.item(row, 2)
             serial = serial_item.text() if serial_item else ""
             ads_link = ads_item.text() if ads_item else ""
-            table_data.append({'serial': serial, 'ads_link': ads_link})
+            table_data.append({'serial': serial, 'ads_link': ads_link, 'row_index': row})
 
         self.disable_buttons()
 
         self.worker = Worker("run_ads", table_data)
         self.worker.progress.connect(self.update_status)
         self.worker.finished.connect(self.on_worker_finished)
+        self.worker.row_result.connect(self.on_row_result)
         self.worker.start()
 
     def setup_keyboard_for_all(self):

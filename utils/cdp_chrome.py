@@ -30,12 +30,13 @@ class ChromeCDP:
             cdp.click("#login-button")
     """
 
-    def __init__(self, serial: str, debug_port: int = 9222):
+    def __init__(self, serial: str, debug_port: int = 9222, initial_url: str = None):
         self.serial = serial
         self.debug_port = debug_port
         self.ws: Optional[websocket.WebSocket] = None
         self.msg_id = 1
         self.tabs = []
+        self._initial_url: Optional[str] = initial_url
 
     def __enter__(self):
         self._setup_chrome_debugging()
@@ -65,8 +66,11 @@ class ChromeCDP:
         self._adb("shell am force-stop com.android.chrome")
         time.sleep(2)
 
-        # Mở Chrome với remote debugging
-        self._adb("shell am start -n com.android.chrome/com.google.android.apps.chrome.Main")
+        # Mở Chrome, vào thẳng URL nếu có để tránh vào 2 lần
+        if self._initial_url:
+            self._adb(f'shell am start -a android.intent.action.VIEW -n com.android.chrome/com.google.android.apps.chrome.Main -d "{self._initial_url}"')
+        else:
+            self._adb("shell am start -n com.android.chrome/com.google.android.apps.chrome.Main")
 
         # Forward port
         subprocess.run(
@@ -158,8 +162,7 @@ class ChromeCDP:
             })
 
     def get_page_title(self) -> str:
-        """Lấy title của trang, reconnect tab nếu cần."""
-        # Lấy tab hiện tại từ /json để có URL mới nhất
+        """Lấy title của trang, đọc từ /json endpoint để có giá trị mới nhất sau navigation."""
         try:
             response = requests.get(f"http://localhost:{self.debug_port}/json", timeout=5)
             tabs = response.json()
@@ -168,9 +171,24 @@ class ChromeCDP:
                 return page_tabs[0].get("title", "")
         except Exception:
             pass
-        # Fallback
         result = self._send_command("Runtime.evaluate", {
             "expression": "document.title",
+            "returnByValue": True
+        })
+        return result.get("result", {}).get("value", "")
+
+    def get_current_url(self) -> str:
+        """Lấy URL hiện tại của tab, đọc từ /json endpoint."""
+        try:
+            response = requests.get(f"http://localhost:{self.debug_port}/json", timeout=5)
+            tabs = response.json()
+            page_tabs = [t for t in tabs if t.get("type") == "page"]
+            if page_tabs:
+                return page_tabs[0].get("url", "")
+        except Exception:
+            pass
+        result = self._send_command("Runtime.evaluate", {
+            "expression": "window.location.href",
             "returnByValue": True
         })
         return result.get("result", {}).get("value", "")

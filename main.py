@@ -135,9 +135,7 @@ def run_ads_automation(
     """
     from utils.cdp_chrome import ChromeCDP
 
-    with ChromeCDP(serial=serial) as cdp:
-        # Navigate tới URL
-        cdp.navigate(url)
+    with ChromeCDP(serial=serial, initial_url=url) as cdp:
 
         # Đợi trang load
         import time
@@ -233,16 +231,23 @@ def run_ads_automation(
                 # Đợi trang đích load
                 time.sleep(5)
                 page_title = cdp.get_page_title()
-                print(f"📄 Landed on: {page_title}")
+                page_url = cdp.get_current_url()
+                print(f"📄 Landed on: {page_title} ({page_url})")
             else:
                 print(f"⚠️  'Learn more' button not found in modal on {serial}")
                 page_title = cdp.get_page_title()
+                page_url = cdp.get_current_url()
         except Exception as e:
             print(f"⚠️  Error clicking 'Learn more' in modal on {serial}: {e}")
             page_title = cdp.get_page_title()
+            page_url = cdp.get_current_url()
 
         # ----------------------------------------------------------------
         # Có thể thêm logic khác tại đây nếu cần
         # ----------------------------------------------------------------
 
-        return page_title
+        # Lấy domain từ URL
+        from urllib.parse import urlparse
+        domain = urlparse(page_url).netloc if page_url else ""
+
+        return {"title": page_title, "domain": domain, "url": page_url}
