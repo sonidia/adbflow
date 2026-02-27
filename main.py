@@ -101,9 +101,148 @@ def install_xapk(serial: str, xapk_path: str):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 def install_chrome(serial: str, apk_path: str = "chrome.apkm"):
-    """Install Chrome — mặc định dùng chrome.apkm (Android 7.0+, SDK 24)."""
     ext = os.path.splitext(apk_path)[1].lower()
     if ext in (".xapk", ".apkm"):
         install_xapk(serial, apk_path)
     else:
         adb(serial, "install", "-r", apk_path)
+
+def open_url_in_chrome(serial: str, url: str):
+    """Mở Chrome trên device và điều hướng tới URL."""
+    if not url:
+        raise ValueError("URL is empty")
+    # Đảm bảo có scheme
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    adb(serial, "shell", "am", "start",
+        "-a", "android.intent.action.VIEW",
+        "-n", "com.android.chrome/com.google.android.apps.chrome.Main",
+        "-d", url)
+
+def run_ads_automation(
+    serial: str,
+    url: str,
+):
+    """
+    Mở link ads trong Chrome rồi dùng CDP để thao tác DOM.
+
+    Args:
+        serial: ADB serial của device
+        url: link ads cần mở
+
+    Raises:
+        RuntimeError: nếu Chrome không chạy hoặc lỗi kết nối
+    """
+    from utils.cdp_chrome import ChromeCDP
+
+    with ChromeCDP(serial=serial) as cdp:
+        # Navigate tới URL
+        cdp.navigate(url)
+
+        # Đợi trang load
+        import time
+        time.sleep(5)
+
+        # Đợi modal "Link to ad" xuất hiện (tìm cả trong iframes)
+        print(f"⏳ Waiting for 'Link to ad' modal on {serial}...")
+        modal_appeared = False
+        for _ in range(15):  # Đợi tối đa 15 giây
+            time.sleep(1)
+            check_modal = cdp.execute_js("""
+            (function() {
+                // Tìm đúng dialog chứa text "Link to ad"
+                const dialogs = document.querySelectorAll('[role="dialog"]');
+                for (const dialog of dialogs) {
+                    if (dialog.textContent && dialog.textContent.toLowerCase().includes('link to ad')) {
+                        return true;
+                    }
+                }
+                return false;
+            })()
+            """)
+            if check_modal:
+                modal_appeared = True
+                print(f"✅ 'Link to ad' modal appeared on {serial}")
+                break
+
+        if not modal_appeared:
+            print(f"⚠️  'Link to ad' modal not found on {serial}")
+            page_title = cdp.get_page_title()
+            return page_title
+
+        # Cuộn xuống trong modal để nút "Learn more" hiện ra
+        print(f"📜 Scrolling down in modal to find 'Learn more' button on {serial}...")
+        cdp.execute_js("""
+        (function() {
+            // Cuộn đúng dialog chứa "link to ad"
+            const dialogs = document.querySelectorAll('[role="dialog"]');
+            for (const dialog of dialogs) {
+                if (dialog.textContent && dialog.textContent.toLowerCase().includes('link to ad')) {
+                    dialog.scrollTop = dialog.scrollHeight;
+                    return;
+                }
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+        })()
+        """)
+        time.sleep(1)
+
+        # Tìm và click button "Learn more" trong modal
+        try:
+            # Lấy tọa độ của button "Learn more" trong dialog
+            js_rect = """
+            (function() {
+                const dialogs = document.querySelectorAll('[role="dialog"]');
+                let targetDialog = null;
+                for (const dialog of dialogs) {
+                    if (dialog.textContent && dialog.textContent.toLowerCase().includes('link to ad')) {
+                        targetDialog = dialog;
+                        break;
+                    }
+                }
+                if (!targetDialog) return null;
+
+                const btn = Array.from(targetDialog.querySelectorAll('a, button, [role="button"]')).find(el =>
+                    el.textContent && el.textContent.trim().toLowerCase().includes('learn more')
+                );
+                if (!btn) return null;
+
+                btn.scrollIntoView({block: 'center'});
+                const rect = btn.getBoundingClientRect();
+                return {
+                    x: Math.round(rect.left + rect.width / 2),
+                    y: Math.round(rect.top + rect.height / 2)
+                };
+            })()
+            """
+            rect = cdp.execute_js(js_rect)
+            if rect and rect.get('x') and rect.get('y'):
+                x, y = rect['x'], rect['y']
+                print(f"🎯 'Learn more' button found at ({x}, {y}) on {serial}")
+                # Dùng CDP Input để click tọa độ thật
+                cdp._send_command("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "x": x, "y": y,
+                    "button": "left", "clickCount": 1
+                })
+                time.sleep(0.1)
+                cdp._send_command("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "x": x, "y": y,
+                    "button": "left", "clickCount": 1
+                })
+                print(f"✅ Clicked 'Learn more' button in modal on {serial}")
+                # Đợi trang đích load
+                time.sleep(5)
+                page_title = cdp.get_page_title()
+                print(f"📄 Landed on: {page_title}")
+            else:
+                print(f"⚠️  'Learn more' button not found in modal on {serial}")
+                page_title = cdp.get_page_title()
+        except Exception as e:
+            print(f"⚠️  Error clicking 'Learn more' in modal on {serial}: {e}")
+            page_title = cdp.get_page_title()
+
+        # ----------------------------------------------------------------
+        # Có thể thêm logic khác tại đây nếu cần
+        # ----------------------------------------------------------------
+
+        return page_title

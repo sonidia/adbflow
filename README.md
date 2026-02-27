@@ -77,17 +77,14 @@ A comprehensive GUI tool for mobile automation that manages cookie files and per
    ```
 
 2. **Load Cookies:**
-
    - Click "Load Cookie" to select and upload `.txt` cookie files
    - Files are automatically copied to the `cookies/` directory
 
 3. **Refresh Device Data:**
-
    - Click "Refresh data" to scan connected devices and update the table
    - Displays device model, serial, username, and associated cookie files
 
 4. **Setup ADB Keyboard:**
-
    - Click "Setup Keyboard" to install ADB keyboard on all connected devices
    - Required for automated text input
 
@@ -156,6 +153,121 @@ adb devices
 adb kill-server
 adb start-server
 ```
+
+## Chrome Automation Setup (CDP)
+
+The "Run Ads" feature uses Chrome DevTools Protocol (CDP) for browser automation on Android devices.
+
+### How it works
+
+```
+Python app → ADB forward port → Chrome mobile → CDP WebSocket
+```
+
+### Prerequisites
+
+- Chrome installed on Android device
+- ADB (already included)
+
+### Setup Steps
+
+1. **Install dependencies:**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Enable Chrome remote debugging:**
+
+   The app automatically:
+   - Starts Chrome with remote debugging
+   - Forwards ADB port 9222
+   - Connects via WebSocket
+
+### Usage
+
+1. Add ads URLs to the "Ads Link" column in the GUI
+2. Click "Run Ads" button
+3. CDP will automate Chrome on each device
+
+### Customization
+
+Edit the `run_ads_automation` function in `main.py` to add your specific automation logic:
+
+```python
+# Current implementation: Click element with text "Learn more"
+js_click = """
+const elements = Array.from(document.querySelectorAll('*')).filter(el =>
+    el.textContent && el.textContent.trim().toLowerCase().includes('learn more')
+);
+if (elements.length > 0) {
+    elements[0].click();
+    'clicked';
+} else {
+    'not_found';
+}
+"""
+result = cdp.execute_js(js_click)
+
+# Add more actions as needed:
+# cdp.click('.another-button')        # Click by CSS selector
+# time.sleep(2)                       # Wait for page changes
+# cdp.input_text('#input-field', 'text')  # Fill form fields
+```
+
+### Test Script
+
+Test your ads automation with a specific URL:
+
+```bash
+python test_ads.py "https://your-ads-url-here"
+```
+
+### Available CDP methods
+
+- `cdp.navigate(url)` - Go to URL
+- `cdp.click(selector)` - Click CSS selector
+- `cdp.input_text(selector, text)` - Type text into input field
+- `cdp.execute_js(js)` - Run JavaScript and return result
+- `cdp.get_page_title()` - Get page title
+
+### Text-based Element Finding
+
+For elements without reliable CSS selectors, use JavaScript to find by text content:
+
+```python
+# Find and click element containing "Learn more" (case-insensitive)
+js_click = """
+const elements = Array.from(document.querySelectorAll('*')).filter(el =>
+    el.textContent && el.textContent.trim().toLowerCase().includes('learn more')
+);
+if (elements.length > 0) {
+    elements[0].click();
+    'clicked';
+} else {
+    'not_found';
+}
+"""
+result = cdp.execute_js(js_click)
+```
+
+### Demo Script
+
+Run the demo to see CDP in action:
+
+```bash
+python demo_cdp.py
+```
+
+### Error Handling
+
+The automation is designed to be robust:
+
+- If an element is not found, it logs a warning but continues
+- Network timeouts are handled gracefully
+- Chrome crashes are automatically recovered
+
+Check the console output for detailed logs during automation.
 
 ## Contributing
 
