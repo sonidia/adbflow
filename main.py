@@ -1,5 +1,14 @@
 import subprocess, zipfile, tempfile, os, json, shutil
 
+# Đảm bảo adb luôn tìm được dù PATH của session chưa được update
+_ANDROID_TOOLS_PATHS = [
+    r"C:\android-tools\platform-tools",
+    r"C:\android-tools\scrcpy-win64-v3.3.4",
+]
+for _p in _ANDROID_TOOLS_PATHS:
+    if os.path.isdir(_p) and _p not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
+
 si = subprocess.STARTUPINFO()
 si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 

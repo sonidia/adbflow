@@ -1,7 +1,19 @@
-import sys, os, subprocess
+import sys, os, subprocess, shutil
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QTableWidget, QTableWidgetItem, QHBoxLayout
 from PySide6.QtCore import QTimer, QThread, Signal, Qt
 from PySide6.QtGui import QIcon
+
+# Đảm bảo adb và scrcpy luôn tìm được dù PATH của session chưa được update
+_ANDROID_TOOLS_PATHS = [
+    r"C:\android-tools\platform-tools",
+    r"C:\android-tools\scrcpy-win64-v3.3.4",
+]
+for _p in _ANDROID_TOOLS_PATHS:
+    if os.path.isdir(_p) and _p not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
+
+_si = subprocess.STARTUPINFO()
+_si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 from helpers.csv import CSVHelper
 from main import setup_adb_keyboard, install_chrome, open_url_in_chrome, run_ads_automation
 
@@ -22,8 +34,6 @@ class Worker(QThread):
                 self.setup_keyboard_for_all()
             elif self.task_type == "install_chrome":
                 self.install_chrome_for_all()
-            elif self.task_type == "open_ads":
-                self.open_ads_for_all()
             elif self.task_type == "run_ads":
                 self.run_ads_for_all()
         except Exception as e:
@@ -70,33 +80,6 @@ class Worker(QThread):
                     self.progress.emit(f'❌ Error installing Chrome for device {serial}: {str(e)}')
 
         self.finished.emit(f'Successfully installed Chrome for {successful_devices} out of {row_count} devices')
-
-    def open_ads_for_all(self):
-        row_count = len(self.table_data)
-        if row_count == 0:
-            self.finished.emit('No devices found in table')
-            return
-
-        successful_devices = 0
-        for row in self.table_data:
-            serial = row.get('serial', '')
-            ads_link = row.get('ads_link', '')
-
-            if not serial:
-                continue
-            if not ads_link:
-                self.progress.emit(f'⚠️ No ads link for device: {serial}')
-                continue
-
-            try:
-                self.progress.emit(f'Opening ads for: {serial}')
-                open_url_in_chrome(serial, ads_link)
-                successful_devices += 1
-                self.progress.emit(f'✅ Opened ads on device: {serial}')
-            except Exception as e:
-                self.progress.emit(f'❌ Error on device {serial}: {str(e)}')
-
-        self.finished.emit(f'Successfully opened ads on {successful_devices} out of {row_count} devices')
 
     def run_ads_for_all(self):
         row_count = len(self.table_data)
@@ -168,13 +151,22 @@ class CookieLoaderGUI(QWidget):
         self.install_chrome_button.clicked.connect(self.install_chrome_for_all)
         left_layout.addWidget(self.install_chrome_button)
 
-        self.open_ads_button = QPushButton('Open Ads')
-        self.open_ads_button.clicked.connect(self.open_ads_for_all)
-        left_layout.addWidget(self.open_ads_button)
-
         self.run_ads_button = QPushButton('Run Ads')
         self.run_ads_button.clicked.connect(self.run_ads_for_all)
         left_layout.addWidget(self.run_ads_button)
+
+        self.screen_on_button = QPushButton('Screen ON')
+        self.screen_on_button.clicked.connect(self.turn_screen_on_all)
+        left_layout.addWidget(self.screen_on_button)
+
+        self.screen_off_button = QPushButton('Screen OFF')
+        self.screen_off_button.clicked.connect(self.turn_screen_off_all)
+        left_layout.addWidget(self.screen_off_button)
+
+        self.remote_button = QPushButton('📱 Remote')
+        self.remote_button.setToolTip('Open scrcpy screen preview for selected device (or all if none selected)')
+        self.remote_button.clicked.connect(self.open_remote)
+        left_layout.addWidget(self.remote_button)
 
         # Add stretch to push buttons to top
         left_layout.addStretch()
@@ -210,7 +202,10 @@ class CookieLoaderGUI(QWidget):
 
     def get_devices_with_model(self):
         try:
-            out = subprocess.check_output(["adb", "devices", "-l"], text=True)
+            out = subprocess.check_output(
+                ["adb", "devices", "-l"],
+                text=True, startupinfo=_si, stderr=subprocess.DEVNULL
+            )
             lines = out.strip().splitlines()[1:]
 
             devices = []
@@ -368,15 +363,19 @@ class CookieLoaderGUI(QWidget):
         self.refresh_button.setEnabled(False)
         self.setup_keyboard_button.setEnabled(False)
         self.install_chrome_button.setEnabled(False)
-        self.open_ads_button.setEnabled(False)
         self.run_ads_button.setEnabled(False)
+        self.screen_on_button.setEnabled(False)
+        self.screen_off_button.setEnabled(False)
+        self.remote_button.setEnabled(False)
 
     def enable_buttons(self):
         self.refresh_button.setEnabled(True)
         self.setup_keyboard_button.setEnabled(True)
         self.install_chrome_button.setEnabled(True)
-        self.open_ads_button.setEnabled(True)
         self.run_ads_button.setEnabled(True)
+        self.screen_on_button.setEnabled(True)
+        self.screen_off_button.setEnabled(True)
+        self.remote_button.setEnabled(True)
 
     def install_chrome_for_all(self):
         if self.worker and self.worker.isRunning():
@@ -393,27 +392,6 @@ class CookieLoaderGUI(QWidget):
         self.disable_buttons()
 
         self.worker = Worker("install_chrome", table_data)
-        self.worker.progress.connect(self.update_status)
-        self.worker.finished.connect(self.on_worker_finished)
-        self.worker.start()
-
-    def open_ads_for_all(self):
-        if self.worker and self.worker.isRunning():
-            self.update_status('Task already running')
-            return
-
-        table_data = []
-        row_count = self.table.rowCount()
-        for row in range(row_count):
-            serial_item = self.table.item(row, 1)
-            ads_item = self.table.item(row, 2)
-            serial = serial_item.text() if serial_item else ""
-            ads_link = ads_item.text() if ads_item else ""
-            table_data.append({'serial': serial, 'ads_link': ads_link})
-
-        self.disable_buttons()
-
-        self.worker = Worker("open_ads", table_data)
         self.worker.progress.connect(self.update_status)
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.start()
@@ -460,6 +438,112 @@ class CookieLoaderGUI(QWidget):
         self.worker.progress.connect(self.update_status)
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.start()
+
+    def _get_screen_state(self, serial):
+        """Trả về True nếu màn hình đang ON, False nếu OFF."""
+        try:
+            out = subprocess.check_output(
+                ["adb", "-s", serial, "shell", "dumpsys", "power"],
+                text=True, stderr=subprocess.DEVNULL, startupinfo=_si
+            )
+            return "mWakefulness=Awake" in out or "mHoldingWakeLockSuspendBlocker=true" in out
+        except Exception:
+            return None
+
+    def turn_screen_on_all(self):
+        """Bật màn hình tất cả devices (nếu đang tắt thì mở lên)."""
+        serials = self._collect_serials()
+        if not serials:
+            self.update_status('No devices found')
+            return
+        success = 0
+        for serial in serials:
+            try:
+                is_on = self._get_screen_state(serial)
+                if not is_on:
+                    subprocess.run(
+                        ["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                        check=True, stderr=subprocess.DEVNULL, startupinfo=_si
+                    )
+                success += 1
+                self.update_status(f'✅ Screen ON: {serial}')
+            except Exception as e:
+                self.update_status(f'❌ Error screen ON {serial}: {str(e)}')
+        self.update_status(f'Screen ON done: {success}/{len(serials)} devices')
+
+    def turn_screen_off_all(self):
+        """Tắt màn hình tất cả devices (nếu đang bật thì tắt đi)."""
+        serials = self._collect_serials()
+        if not serials:
+            self.update_status('No devices found')
+            return
+        success = 0
+        for serial in serials:
+            try:
+                is_on = self._get_screen_state(serial)
+                if is_on:
+                    subprocess.run(
+                        ["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                        check=True, stderr=subprocess.DEVNULL, startupinfo=_si
+                    )
+                success += 1
+                self.update_status(f'✅ Screen OFF: {serial}')
+            except Exception as e:
+                self.update_status(f'❌ Error screen OFF {serial}: {str(e)}')
+        self.update_status(f'Screen OFF done: {success}/{len(serials)} devices')
+
+    def _collect_serials(self):
+        serials = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 1)
+            serial = item.text().strip() if item else ""
+            if serial:
+                serials.append(serial)
+        return serials
+
+    def open_remote(self):
+        """Mở scrcpy cho device đang được chọn, hoặc tất cả nếu không chọn gì."""
+        selected_rows = self.table.selectionModel().selectedRows()
+        if selected_rows:
+            serials = []
+            for index in selected_rows:
+                item = self.table.item(index.row(), 1)
+                serial = item.text().strip() if item else ""
+                if serial:
+                    serials.append(serial)
+        else:
+            serials = self._collect_serials()
+
+        if not serials:
+            self.update_status('No devices found to remote')
+            return
+
+        launched = 0
+        for serial in serials:
+            try:
+                # Tìm scrcpy: thử PATH trước, fallback về thư mục cài đặt cố định
+                scrcpy_exe = (
+                    shutil.which("scrcpy")
+                    or r"C:\android-tools\scrcpy-win64-v3.3.4\scrcpy.exe"
+                )
+                if not os.path.isfile(scrcpy_exe) and scrcpy_exe != "scrcpy":
+                    raise FileNotFoundError(f"scrcpy not found at: {scrcpy_exe}")
+
+                # KHÔNG dùng _si ở đây — scrcpy cần hiện cửa sổ GUI
+                subprocess.Popen(
+                    [scrcpy_exe, "-s", serial, "--window-title", serial],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                launched += 1
+                self.update_status(f'📱 Opening remote for: {serial}')
+            except FileNotFoundError:
+                self.update_status('❌ scrcpy not found. Please install scrcpy and add it to PATH.')
+                return
+            except Exception as e:
+                self.update_status(f'❌ Error opening remote for {serial}: {str(e)}')
+
+        self.update_status(f'📱 Remote opened for {launched} device(s)')
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
 """
-Test script cho ads automation với text-based "Learn more" click
-
-Chạy script này để test với URL ads thật:
-    python test_ads.py "https://your-ads-url-here"
+Test script for ads automation with modal detection.
 """
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+import csv
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from main import run_ads_automation
 
-def test_ads_automation(url: str, serial: str = "223824861c027ece"):
-    """Test ads automation với URL cụ thể."""
-    print(f"🚀 Testing ads automation on {serial}")
-    print(f"📱 URL: {url}")
-    print("🎯 Will try to click element with text 'Learn more'")
-    print()
+def test_ads():
+    # Đọc URL từ data.csv
+    ads_url = None
+    device_serial = None
 
     try:
-        title = run_ads_automation(serial, url)
-        print(f"✅ SUCCESS: Page title = '{title}'")
-        print("🎯 Automation completed (Learn more clicked if found)")
+        with open('data.csv', 'r', newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 3:
+                    device_serial = row[1]  # Serial number
+                    ads_url = row[2]        # Ads link
+                    break
+    except FileNotFoundError:
+        print("data.csv not found")
+        return
 
+    if not ads_url or not device_serial:
+        print("No ads URL or device serial found in data.csv")
+        return
+
+    try:
+        print(f"Testing ads automation on device {device_serial}")
+        print(f"Ads URL: {ads_url}")
+        result = run_ads_automation(device_serial, ads_url)
+        print(f"Test completed. Page title: {result}")
     except Exception as e:
-        print(f"❌ ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Test failed: {e}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python test_ads.py <ads_url>")
-        print("Example: python test_ads.py https://example.com/ads")
-        print()
-        print("The script will:")
-        print("1. Open Chrome on device")
-        print("2. Navigate to the URL")
-        print("3. Look for element with text 'Learn more'")
-        print("4. Click it if found")
-        sys.exit(1)
-
-    url = sys.argv[1]
-    test_ads_automation(url)
+    test_ads()
