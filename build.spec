@@ -35,7 +35,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='adbflow',
+    name='fatan',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

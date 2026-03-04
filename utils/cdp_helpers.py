@@ -23,8 +23,7 @@ if TYPE_CHECKING:
 
 from utils.device_io import adb_tap, adb_swipe
 
-logger = logging.getLogger("adbflow.cdp_helpers")
-
+logger = logging.getLogger("fatan.cdp_helpers")
 
 # ---------------------------------------------------------------------------
 # Safe-zone detection

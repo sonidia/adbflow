@@ -113,18 +113,16 @@ def setup_adb_keyboard(
     adb(serial, "shell", "ime", "enable", ime)
     adb(serial, "shell", "ime", "set", ime)
 
-
 # ---------------------------------------------------------------------------
 # Device I/O layer — migrated from utils/device_io.py
 # ---------------------------------------------------------------------------
 
-logger = logging.getLogger("adbflow.adb")
+logger = logging.getLogger("fatan.adb")
 
 # ── Rate-limiter: minimum gap between ADB commands per serial ───────────
 _MIN_ADB_INTERVAL = 0.02  # 20 ms
 _last_cmd_time: dict[str, float] = {}
 _rate_lock = threading.Lock()
-
 
 def _rate_limit(serial: str):
     """Ensure at least _MIN_ADB_INTERVAL seconds between commands to the same device."""
@@ -135,7 +133,6 @@ def _rate_limit(serial: str):
         if wait > 0:
             time.sleep(wait)
         _last_cmd_time[serial] = time.monotonic()
-
 
 def adb_run(
     serial: str,
@@ -206,7 +203,6 @@ def adb_run(
 
     raise last_err  # type: ignore[misc]
 
-
 def adb_swipe(serial: str, x0: int, y0: int, x1: int, y1: int, duration_ms: int):
     """ADB input swipe with timeout and error capture."""
     adb_run(
@@ -216,16 +212,13 @@ def adb_swipe(serial: str, x0: int, y0: int, x1: int, y1: int, duration_ms: int)
         silent=True,
     )
 
-
 def adb_tap(serial: str, x: int, y: int):
     """ADB input tap with timeout and error capture."""
     adb_run(serial, "shell", "input", "tap", str(x), str(y), timeout=10.0, silent=True)
 
-
 def adb_back(serial: str):
     """Send KEYEVENT_BACK."""
     adb_run(serial, "shell", "input", "keyevent", "4", timeout=10.0)
-
 
 def adb_keyevent(serial: str, keycode: int):
     """Send arbitrary key event."""

@@ -131,7 +131,7 @@ class Worker(QThread):
 class CookieLoaderGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.app_name = "Adbflow"
+        self.app_name = "Fatan"
         self.icon = "icon.png"
         self.data_csv = "data.csv"
         self.settings_file = "settings.json"
@@ -281,8 +281,8 @@ class CookieLoaderGUI(QWidget):
             "  background: #ffffff;"
             "  color: #212121;"
             "  font-size: 11px;"
-            "  min-height: 24px;"
-            "  max-height: 28px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
             "}"
             "QLineEdit:focus {"
             "  border: 1px solid #1976d2;"
@@ -290,7 +290,7 @@ class CookieLoaderGUI(QWidget):
         )
         ads_link_row.addWidget(self.ads_link_input)
         self.ads_link_copy_btn = QPushButton("📋")
-        self.ads_link_copy_btn.setFixedSize(28, 28)
+        self.ads_link_copy_btn.setFixedSize(24, 24)
         self.ads_link_copy_btn.setToolTip("Copy ads link to clipboard")
         self.ads_link_copy_btn.clicked.connect(self._copy_ads_link)
         ads_link_row.addWidget(self.ads_link_copy_btn)

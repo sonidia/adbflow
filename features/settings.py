@@ -55,11 +55,11 @@ class SettingsWidget(QWidget):
     # ── UI ───────────────────────────────────────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(16)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
 
         # ── Scrcpy Preview ───────────────────────────────────────────────
-        preview_group = QGroupBox("📱 Scrcpy Preview")
+        preview_group = QGroupBox("📱 Remote preview")
         preview_group.setStyleSheet("""
             QGroupBox {
                 font-weight: bold;
@@ -84,12 +84,42 @@ class SettingsWidget(QWidget):
         self._width_input = QLineEdit(str(self._data["preview_width"]))
         self._width_input.setPlaceholderText("e.g. 400")
         self._width_input.setMaximumWidth(120)
-        form.addRow(QLabel("Preview Width (px):"), self._width_input)
+        self._width_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        form.addRow(QLabel("Width (px):"), self._width_input)
 
         self._height_input = QLineEdit(str(self._data["preview_height"]))
         self._height_input.setPlaceholderText("e.g. 800")
         self._height_input.setMaximumWidth(120)
-        form.addRow(QLabel("Preview Height (px):"), self._height_input)
+        self._height_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        form.addRow(QLabel("Height (px):"), self._height_input)
 
         preview_group.setLayout(form)
         root.addWidget(preview_group)
@@ -100,6 +130,11 @@ class SettingsWidget(QWidget):
         self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;")
         btn_row.addWidget(self._status_label)
         btn_row.addStretch()
+
+        reset_btn = QPushButton("🔄 Reset to defaults")
+        reset_btn.setFixedWidth(160)
+        reset_btn.clicked.connect(self._on_reset)
+        btn_row.addWidget(reset_btn)
 
         save_btn = QPushButton("💾 Save settings")
         save_btn.setFixedWidth(140)
@@ -124,3 +159,11 @@ class SettingsWidget(QWidget):
         self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;")
         self._status_label.setText("✅ Settings saved.")
         self.settings_saved.emit(dict(self._data))
+
+    def _on_reset(self):
+        """Reset settings to default values."""
+        self._data = dict(self.DEFAULTS)
+        self._width_input.setText(str(self._data["preview_width"]))
+        self._height_input.setText(str(self._data["preview_height"]))
+        self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;")
+        self._status_label.setText("🔄 Settings reset to defaults.")

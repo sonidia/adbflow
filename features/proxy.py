@@ -20,7 +20,6 @@ from PySide6.QtCore import Signal, Qt
 _si = subprocess.STARTUPINFO()
 _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-
 def _adb(serial: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["adb", "-s", serial, *args],
@@ -29,14 +28,13 @@ def _adb(serial: str, *args: str) -> subprocess.CompletedProcess:
         text=True,
     )
 
-
 class ProxyWidget(QWidget):
     """Proxy / SOCKS5 configuration panel rendered as a tab page."""
 
     status_update = Signal(str)
     proxy_status_updated = Signal(dict)  # { serial: {"type": str, "host_port": str} }
 
-    PROXY_TYPES = ["None (clear)", "HTTP / HTTPS", "SOCKS5"]
+    PROXY_TYPES = ["None", "HTTP / HTTPS", "SOCKS5"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,51 +71,167 @@ class ProxyWidget(QWidget):
 
         # Proxy type selector
         type_row = QHBoxLayout()
-        type_row.addWidget(QLabel("Proxy type:"))
+        proxy_type_label = QLabel("Proxy type:")
+        proxy_type_label.setFixedWidth(60)
+        type_row.addWidget(proxy_type_label)
         self._type_combo = QComboBox()
         self._type_combo.addItems(self.PROXY_TYPES)
         self._type_combo.setFixedWidth(160)
+        self._type_combo.setStyleSheet(
+            "QComboBox {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QComboBox:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+            "QComboBox::drop-down {"
+            "  border: none; width: 20px;"
+            "}"
+        )
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         type_row.addWidget(self._type_combo)
+
+        host_label = QLabel("Host / IP:")
+        host_label.setFixedWidth(60)
+        type_row.addWidget(host_label)
+        self._host_input = QLineEdit()
+        self._host_input.setPlaceholderText("e.g. 192.168.1.100  or  proxy.example.com")
+        self._host_input.setFixedWidth(160)
+        self._host_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        type_row.addWidget(self._host_input)
+
+        port_label = QLabel("Port:")
+        port_label.setFixedWidth(60)
+        type_row.addWidget(port_label)
+        self._port_input = QLineEdit()
+        self._port_input.setPlaceholderText("e.g. 8080")
+        self._port_input.setFixedWidth(160)
+        self._port_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        type_row.addWidget(self._port_input)
+
+        # Apply scope
+
         type_row.addStretch()
         cfg_layout.addLayout(type_row)
 
         # Host / Port
-        form = QFormLayout()
-        form.setSpacing(8)
-        self._host_input = QLineEdit()
-        self._host_input.setPlaceholderText("e.g. 192.168.1.100  or  proxy.example.com")
-        self._host_input.setMaximumWidth(280)
-        form.addRow(QLabel("Host / IP:"), self._host_input)
+        host_port_row = QHBoxLayout()
 
-        self._port_input = QLineEdit()
-        self._port_input.setPlaceholderText("e.g. 8080")
-        self._port_input.setMaximumWidth(100)
-        form.addRow(QLabel("Port:"), self._port_input)
+
+        host_port_row.addStretch()
+        cfg_layout.addLayout(host_port_row)
 
         # Auth (optional, HTTP only)
+        auth_row = QHBoxLayout()
+        apply_to_label = QLabel("Apply to:")
+        apply_to_label.setFixedWidth(60)
+        auth_row.addWidget(apply_to_label)
+        self._scope_combo = QComboBox()
+        self._scope_combo.addItems(["All devices", "Selected devices only"])
+        self._scope_combo.setFixedWidth(160)
+        self._scope_combo.setStyleSheet(
+            "QComboBox {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QComboBox:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+            "QComboBox::drop-down {"
+            "  border: none; width: 20px;"
+            "}"
+        )
+        auth_row.addWidget(self._scope_combo)
+
+        username_label = QLabel("Username:")
+        username_label.setFixedWidth(60)
+        auth_row.addWidget(username_label)
         self._user_input = QLineEdit()
         self._user_input.setPlaceholderText("optional")
-        self._user_input.setMaximumWidth(180)
-        form.addRow(QLabel("Username:"), self._user_input)
+        self._user_input.setFixedWidth(160)
+        self._user_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        auth_row.addWidget(self._user_input)
 
+        password_label = QLabel("Password:")
+        password_label.setFixedWidth(60)
+        auth_row.addWidget(password_label)
         self._pass_input = QLineEdit()
         self._pass_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._pass_input.setPlaceholderText("optional")
-        self._pass_input.setMaximumWidth(180)
-        form.addRow(QLabel("Password:"), self._pass_input)
-
-        cfg_layout.addLayout(form)
-
-        # Apply scope
-        scope_row = QHBoxLayout()
-        scope_row.addWidget(QLabel("Apply to:"))
-        self._scope_combo = QComboBox()
-        self._scope_combo.addItems(["All devices", "Selected devices only"])
-        self._scope_combo.setFixedWidth(180)
-        scope_row.addWidget(self._scope_combo)
-        scope_row.addStretch()
-        cfg_layout.addLayout(scope_row)
+        self._pass_input.setFixedWidth(160)
+        self._pass_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #bdbdbd;"
+            "  border-radius: 4px;"
+            "  padding: 2px 6px;"
+            "  background: #ffffff;"
+            "  color: #212121;"
+            "  font-size: 11px;"
+            "  min-height: 20px;"
+            "  max-height: 24px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2;"
+            "}"
+        )
+        auth_row.addWidget(self._pass_input)
+        auth_row.addStretch()
+        cfg_layout.addLayout(auth_row)
 
         # Buttons
         btn_row = QHBoxLayout()

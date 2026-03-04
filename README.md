@@ -1,4 +1,4 @@
-# Adbflow
+# Fatan
 
 A comprehensive GUI tool for mobile automation that manages cookie files and performs automated TikTok cookie importing on Android devices using ADB.
 

@@ -4,10 +4,7 @@ from utils.cdp_chrome import ChromeCDP
 from utils.cdp_helpers import InputDriver, get_webpage_safe_zone
 from features.session_engine import browse_session
 
-logger = logging.getLogger("adbflow.ads")
-
-
-
+logger = logging.getLogger("fatan.ads")
 
 def run_ads_automation(
     serial: str,
@@ -240,7 +237,7 @@ class AdsLinkWidget(QWidget):
 
         # Copy button
         self.copy_button = QPushButton("📋")
-        self.copy_button.setFixedSize(24, 24)
+        self.copy_button.setFixedSize(32, 32)
         self.copy_button.setToolTip("Copy link to clipboard")
         self.copy_button.clicked.connect(self.copy_link)
         layout.addWidget(self.copy_button)
@@ -283,29 +280,6 @@ class AdsLinkWidget(QWidget):
         self.link_input.setVisible(False)
         self.copy_button.setVisible(True)  # Hiện lại nút copy
         self.link_changed.emit(new_link)
-
-    def edit_link(self, event=None):
-        """Open dialog to edit the link."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Edit Ads Link")
-        dialog.setModal(True)
-
-        layout = QVBoxLayout()
-
-        link_input = QLineEdit(self.full_link)
-        layout.addWidget(link_input)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        dialog.setLayout(layout)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_link = link_input.text().strip()
-            self.set_link(new_link)
-            self.link_changed.emit(new_link)
 
     def set_link(self, link_text):
         self.full_link = link_text
@@ -407,7 +381,7 @@ class AdsTableWidget(QWidget):
             QGroupBox {
                 font-weight: bold;
                 font-size: 12px;
-                border: 1px solid #c5cae9;
+                border: 1px solid #ccc;
                 border-radius: 8px;
                 margin-top: 6px;
                 padding-top: 4px;
@@ -433,12 +407,12 @@ class AdsTableWidget(QWidget):
             "QSpinBox, QDoubleSpinBox, QComboBox {"
             "  border: 1px solid #bdbdbd;"
             "  border-radius: 4px;"
-            "  padding: 2px 6px;"
+            "  padding: 1px 5px;"
             "  background: #ffffff;"
             "  color: #212121;"
             "  font-size: 11px;"
-            "  min-height: 24px;"
-            "  max-height: 28px;"
+            "  min-height: 16px;"
+            "  max-height: 20px;"
             "}"
             "QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {"
             "  border: 1px solid #1976d2;"
@@ -448,7 +422,7 @@ class AdsTableWidget(QWidget):
             "}"
             "QSpinBox::up-button, QSpinBox::down-button,"
             "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {"
-            "  width: 16px;"
+            "  width: 0px;"
             "  border: none;"
             "  background: transparent;"
             "}"

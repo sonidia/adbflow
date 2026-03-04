@@ -31,7 +31,7 @@ from utils.cdp_helpers import (
     InputDriver,
 )
 
-logger = logging.getLogger("adbflow.session")
+logger = logging.getLogger("fatan.session")
 
 # ---------------------------------------------------------------------------
 # Behaviour profiles

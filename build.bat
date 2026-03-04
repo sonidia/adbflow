@@ -34,9 +34,9 @@ if %errorlevel% equ 0 (
     echo         BUILD SUCCESSFUL!
     echo ========================================
     echo.
-    echo Executable created: dist\adbflow.exe
+    echo Executable created: dist\fatan.exe
     echo Size:
-    for %%A in ("dist\adbflow.exe") do echo   %%~zA bytes
+    for %%A in ("dist\fatan.exe") do echo   %%~zA bytes
     echo.
     echo Copying dependencies folder to dist...
     xcopy /E /I /Y cookies dist\cookies
