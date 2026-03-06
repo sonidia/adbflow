@@ -379,7 +379,7 @@ class AdsTableWidget(QWidget):
             QGroupBox {
                 font-weight: bold;
                 font-size: 12px;
-                border: 1px solid #ccc;
+                border: 1px solid #ddd;
                 border-radius: 6px;
                 margin-top: 6px;
                 padding-top: 2px;
@@ -403,7 +403,7 @@ class AdsTableWidget(QWidget):
 
         _input_ss = (
             "QSpinBox, QDoubleSpinBox, QComboBox {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 1px 5px;"
             "  background: #ffffff;"
@@ -515,7 +515,7 @@ class AdsTableWidget(QWidget):
             w.setStyleSheet(
                 "#behaviorCell {"
                 "  background: #f8f9ff;"
-                "  border: 1px solid #e3e8f0;"
+                "  border: 1px solid #ddd;"
                 "  border-radius: 6px;"
                 "}"
             )

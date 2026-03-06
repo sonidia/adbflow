@@ -6,18 +6,122 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QGroupBox, QSpacerItem, QSizePolicy,
+    QComboBox, QSlider, QCheckBox, QScrollArea, QFrame,
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt, QThread, QTimer
+
+from features.actions import _PlayStoreWorker
+
+_si = subprocess.STARTUPINFO()
+_si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+for _p in [r"C:\android-tools\platform-tools"]:
+    if os.path.isdir(_p) and _p not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
+
+
+def _adb(serial: str, *args: str, timeout: int = 10) -> str:
+    try:
+        r = subprocess.run(
+            ["adb", "-s", serial, *args],
+            startupinfo=_si, capture_output=True, text=True, timeout=timeout,
+        )
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+def _shell(serial: str, cmd: str, timeout: int = 10) -> str:
+    return _adb(serial, "shell", cmd, timeout=timeout)
+
+
+class _DeviceControlWorker(QThread):
+    finished = Signal(str)
+
+    def __init__(self, serials: list[str], action: str, value=None):
+        super().__init__()
+        self.serials = serials
+        self.action = action
+        self.value = value
+
+    def run(self):
+        results = []
+        for s in self.serials:
+            try:
+                if self.action == "reboot":
+                    _adb(s, "reboot")
+                    results.append(f"✅ Rebooted {s}")
+                elif self.action == "screen_lock_none":
+                    _shell(s, "locksettings clear --old 0000 2>/dev/null; "
+                              "settings put secure lockscreen.disabled 1; "
+                              "settings put global screen_off_timeout 30000")
+                    results.append(f"✅ Screen lock → None on {s}")
+                elif self.action == "screen_lock_swipe":
+                    _shell(s, "settings put secure lockscreen.disabled 0; "
+                              "settings put global screen_off_timeout 30000")
+                    results.append(f"✅ Screen lock → Swipe on {s}")
+                elif self.action == "wifi_on":
+                    _shell(s, "svc wifi enable")
+                    results.append(f"✅ WiFi ON on {s}")
+                elif self.action == "wifi_off":
+                    _shell(s, "svc wifi disable")
+                    results.append(f"✅ WiFi OFF on {s}")
+                elif self.action == "data_on":
+                    _shell(s, "svc data enable")
+                    results.append(f"✅ Mobile data ON on {s}")
+                elif self.action == "data_off":
+                    _shell(s, "svc data disable")
+                    results.append(f"✅ Mobile data OFF on {s}")
+                elif self.action == "airplane_on":
+                    _shell(s, "settings put global airplane_mode_on 1; "
+                              "am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true")
+                    results.append(f"✅ Airplane mode ON on {s}")
+                elif self.action == "airplane_off":
+                    _shell(s, "settings put global airplane_mode_on 0; "
+                              "am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false")
+                    results.append(f"✅ Airplane mode OFF on {s}")
+                elif self.action == "brightness":
+                    val = int(self.value)
+                    _shell(s, f"settings put system screen_brightness_mode 0; "
+                              f"settings put system screen_brightness {val}")
+                    results.append(f"✅ Brightness → {val} on {s}")
+                elif self.action == "disable_animations":
+                    _shell(s, "settings put global window_animation_scale 0; "
+                              "settings put global transition_animation_scale 0; "
+                              "settings put global animator_duration_scale 0")
+                    results.append(f"✅ Animations disabled on {s}")
+                elif self.action == "enable_animations":
+                    _shell(s, "settings put global window_animation_scale 1; "
+                              "settings put global transition_animation_scale 1; "
+                              "settings put global animator_duration_scale 1")
+                    results.append(f"✅ Animations enabled on {s}")
+                elif self.action == "dark_mode_on":
+                    _shell(s, "cmd uimode night yes")
+                    results.append(f"✅ Dark mode ON on {s}")
+                elif self.action == "dark_mode_off":
+                    _shell(s, "cmd uimode night no")
+                    results.append(f"✅ Dark mode OFF on {s}")
+                elif self.action == "stay_on_charging_on":
+                    _shell(s, "settings put global stay_on_while_plugged_in 3")
+                    results.append(f"✅ Stay on while charging ON on {s}")
+                elif self.action == "stay_on_charging_off":
+                    _shell(s, "settings put global stay_on_while_plugged_in 0")
+                    results.append(f"✅ Stay on while charging OFF on {s}")
+            except Exception as e:
+                results.append(f"❌ {s}: {e}")
+        self.finished.emit("\n".join(results) if results else "Done")
 
 
 class SettingsWidget(QWidget):
     """Settings form rendered as an inline tab content (no modal)."""
 
-    settings_saved = Signal(dict)   # emitted after user saves
+    settings_saved = Signal(dict)        # emitted after user saves
+    setup_keyboard_requested = Signal()  # emit to trigger keyboard setup on all devices
+    install_chrome_requested = Signal()  # emit to trigger Chrome install on all devices
 
     DEFAULTS = {
         "preview_width": 400,
@@ -28,6 +132,12 @@ class SettingsWidget(QWidget):
         super().__init__(parent)
         self.settings_file = settings_file
         self._data: dict = dict(self.DEFAULTS)
+        self._get_serials_fn = None   # set by gui after construction
+        self._workers: list = []
+        self._brightness_timer = QTimer()
+        self._brightness_timer.setSingleShot(True)
+        self._brightness_timer.setInterval(1000)
+        self._brightness_timer.timeout.connect(self._apply_brightness)
         self._load()
         self._build_ui()
 
@@ -56,18 +166,24 @@ class SettingsWidget(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(6)
+        root.setSpacing(0)
 
-        # ── Scrcpy Preview ───────────────────────────────────────────────
-        preview_group = QGroupBox("📱 Remote preview")
-        preview_group.setStyleSheet("""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        vl = QVBoxLayout(inner)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(8)
+
+        _GROUP_SS = """
             QGroupBox {
                 font-weight: bold;
                 font-size: 12px;
-                border: 1px solid #ccc;
+                border: 1px solid #ddd;
                 border-radius: 6px;
-                margin-top: 6px;
-                padding-top: 4px;
+                margin-top: 8px;
+                padding-top: 6px;
                 background-color: #fafafa;
             }
             QGroupBox::title {
@@ -76,53 +192,317 @@ class SettingsWidget(QWidget):
                 padding: 0 4px;
                 color: #333;
             }
-        """)
-        form = QFormLayout()
-        form.setContentsMargins(10, 8, 10, 10)
-        form.setSpacing(8)
+        """
+        _GROUP_BLUE_SS = _GROUP_SS.replace("background-color: #fafafa;", "background-color: #f8f9ff;").replace("color: #333;", "color: #1565c0;")
+        _INPUT_SS = (
+            "QLineEdit { border: 1px solid #ddd; border-radius: 4px;"
+            " padding: 2px 6px; background: #ffffff; color: #212121;"
+            " font-size: 11px; min-height: 20px; max-height: 24px; }"
+            "QLineEdit:focus { border: 1px solid #1976d2; }"
+        )
+        _BTN_SS = (
+            "QPushButton { border: 1px solid #ccc; border-radius: 4px;"
+            " padding: 5px 14px; background: #f0f0f0; font-size: 11px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
+        )
+        _BTN_ON_SS = (
+            "QPushButton { border: 1px solid #43a047; border-radius: 4px;"
+            " padding: 5px 14px; background: #e8f5e9; color: #2e7d32; font-size: 11px; font-weight:bold; }"
+            "QPushButton:hover { background: #c8e6c9; }"
+            "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
+        )
+        _BTN_OFF_SS = (
+            "QPushButton { border: 1px solid #e53935; border-radius: 4px;"
+            " padding: 5px 14px; background: #ffebee; color: #c62828; font-size: 11px; font-weight:bold; }"
+            "QPushButton:hover { background: #ffcdd2; }"
+            "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
+        )
+        _LABEL_SS = "font-size: 11px; color: #555; font-weight: bold;"
 
+        # ── Remote Preview ───────────────────────────────────────────────
+        preview_group = QGroupBox("📱 Remote preview")
+        preview_group.setStyleSheet(_GROUP_BLUE_SS)
+        prev_hl = QHBoxLayout()
+        prev_hl.setContentsMargins(10, 8, 10, 10)
+        prev_hl.setSpacing(10)
+
+        lbl_w = QLabel("Width (px):")
+        lbl_w.setStyleSheet(_LABEL_SS)
         self._width_input = QLineEdit(str(self._data["preview_width"]))
         self._width_input.setPlaceholderText("e.g. 400")
-        self._width_input.setMaximumWidth(120)
-        self._width_input.setStyleSheet(
-            "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
-            "  border-radius: 4px;"
-            "  padding: 2px 6px;"
-            "  background: #ffffff;"
-            "  color: #212121;"
-            "  font-size: 11px;"
-            "  min-height: 20px;"
-            "  max-height: 24px;"
-            "}"
-            "QLineEdit:focus {"
-            "  border: 1px solid #1976d2;"
-            "}"
-        )
-        form.addRow(QLabel("Width (px):"), self._width_input)
+        self._width_input.setMaximumWidth(100)
+        self._width_input.setStyleSheet(_INPUT_SS)
+        prev_hl.addWidget(lbl_w)
+        prev_hl.addWidget(self._width_input)
 
+        lbl_h = QLabel("Height (px):")
+        lbl_h.setStyleSheet(_LABEL_SS)
         self._height_input = QLineEdit(str(self._data["preview_height"]))
         self._height_input.setPlaceholderText("e.g. 800")
-        self._height_input.setMaximumWidth(120)
-        self._height_input.setStyleSheet(
-            "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
-            "  border-radius: 4px;"
-            "  padding: 2px 6px;"
-            "  background: #ffffff;"
-            "  color: #212121;"
-            "  font-size: 11px;"
-            "  min-height: 20px;"
-            "  max-height: 24px;"
-            "}"
-            "QLineEdit:focus {"
-            "  border: 1px solid #1976d2;"
-            "}"
-        )
-        form.addRow(QLabel("Height (px):"), self._height_input)
+        self._height_input.setMaximumWidth(100)
+        self._height_input.setStyleSheet(_INPUT_SS)
+        prev_hl.addWidget(lbl_h)
+        prev_hl.addWidget(self._height_input)
+        prev_hl.addStretch()
+        preview_group.setLayout(prev_hl)
+        vl.addWidget(preview_group)
 
-        preview_group.setLayout(form)
-        root.addWidget(preview_group)
+        # ── Device Controls ──────────────────────────────────────────────
+        ctrl_group = QGroupBox("🎛 Device Controls")
+        ctrl_group.setStyleSheet(_GROUP_BLUE_SS)
+        ctrl_vl = QVBoxLayout()
+        ctrl_vl.setContentsMargins(12, 10, 12, 12)
+        ctrl_vl.setSpacing(10)
+
+        # Row 1: Screen lock
+        row_lock = QHBoxLayout()
+        row_lock.setSpacing(8)
+        lbl_lock = QLabel("🔒 Screen lock:")
+        lbl_lock.setStyleSheet(_LABEL_SS)
+        lbl_lock.setFixedWidth(100)
+        row_lock.addWidget(lbl_lock)
+        self._lock_combo = QComboBox()
+        self._lock_combo.addItems(["None (disabled)", "Swipe"])
+        self._lock_combo.setStyleSheet(
+            "QComboBox { border: 1px solid #ddd; border-radius: 4px; padding: 2px 6px;"
+            " background: #fff; font-size: 11px; min-height: 24px; }"
+            "QComboBox:focus { border: 1px solid #1976d2; }"
+            "QComboBox::drop-down { border: none; }"
+        )
+        self._lock_combo.setMaximumWidth(140)
+        row_lock.addWidget(self._lock_combo)
+        self._lock_combo.currentIndexChanged.connect(lambda _: self._apply_screen_lock())
+        row_lock.addStretch()
+        ctrl_vl.addLayout(row_lock)
+
+        # Row 2: WiFi + Mobile Data + Airplane toggles
+        row_toggles = QHBoxLayout()
+        row_toggles.setSpacing(8)
+
+        lbl_wifi = QLabel("📶 WiFi:")
+        lbl_wifi.setStyleSheet(_LABEL_SS)
+        row_toggles.addWidget(lbl_wifi)
+        btn_wifi_on = QPushButton("ON")
+        btn_wifi_on.setStyleSheet(_BTN_ON_SS)
+        btn_wifi_on.setFixedHeight(28)
+        btn_wifi_on.clicked.connect(lambda: self._device_action("wifi_on"))
+        row_toggles.addWidget(btn_wifi_on)
+        btn_wifi_off = QPushButton("OFF")
+        btn_wifi_off.setStyleSheet(_BTN_OFF_SS)
+        btn_wifi_off.setFixedHeight(28)
+        btn_wifi_off.clicked.connect(lambda: self._device_action("wifi_off"))
+        row_toggles.addWidget(btn_wifi_off)
+
+        sep1 = QLabel("|")
+        sep1.setStyleSheet("color: #ccc;")
+        row_toggles.addWidget(sep1)
+
+        lbl_data = QLabel("📡 Mobile Data:")
+        lbl_data.setStyleSheet(_LABEL_SS)
+        row_toggles.addWidget(lbl_data)
+        btn_data_on = QPushButton("ON")
+        btn_data_on.setStyleSheet(_BTN_ON_SS)
+        btn_data_on.setFixedHeight(28)
+        btn_data_on.clicked.connect(lambda: self._device_action("data_on"))
+        row_toggles.addWidget(btn_data_on)
+        btn_data_off = QPushButton("OFF")
+        btn_data_off.setStyleSheet(_BTN_OFF_SS)
+        btn_data_off.setFixedHeight(28)
+        btn_data_off.clicked.connect(lambda: self._device_action("data_off"))
+        row_toggles.addWidget(btn_data_off)
+
+        sep2 = QLabel("|")
+        sep2.setStyleSheet("color: #ccc;")
+        row_toggles.addWidget(sep2)
+
+        lbl_airplane = QLabel("✈ Airplane:")
+        lbl_airplane.setStyleSheet(_LABEL_SS)
+        row_toggles.addWidget(lbl_airplane)
+        btn_ap_on = QPushButton("ON")
+        btn_ap_on.setStyleSheet(_BTN_ON_SS)
+        btn_ap_on.setFixedHeight(28)
+        btn_ap_on.clicked.connect(lambda: self._device_action("airplane_on"))
+        row_toggles.addWidget(btn_ap_on)
+        btn_ap_off = QPushButton("OFF")
+        btn_ap_off.setStyleSheet(_BTN_OFF_SS)
+        btn_ap_off.setFixedHeight(28)
+        btn_ap_off.clicked.connect(lambda: self._device_action("airplane_off"))
+        row_toggles.addWidget(btn_ap_off)
+
+        row_toggles.addStretch()
+        ctrl_vl.addLayout(row_toggles)
+
+        # Row 3: Brightness slider
+        row_bright = QHBoxLayout()
+        row_bright.setSpacing(8)
+        lbl_bright = QLabel("☀ Brightness:")
+        lbl_bright.setStyleSheet(_LABEL_SS)
+        lbl_bright.setFixedWidth(100)
+        row_bright.addWidget(lbl_bright)
+        self._brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self._brightness_slider.setMinimum(0)
+        self._brightness_slider.setMaximum(100)
+        self._brightness_slider.setValue(50)
+        self._brightness_slider.setSingleStep(1)
+        self._brightness_slider.setFixedWidth(180)
+        self._brightness_slider.setStyleSheet(
+            "QSlider::groove:horizontal { height: 4px; background: #ddd; border-radius: 2px; }"
+            "QSlider::handle:horizontal { background: #1976d2; border-radius: 6px;"
+            " width: 14px; height: 14px; margin: -5px 0; }"
+            "QSlider::sub-page:horizontal { background: #1976d2; border-radius: 2px; }"
+        )
+        self._bright_val_lbl = QLabel("50")
+        self._bright_val_lbl.setStyleSheet("font-size: 11px; color: #333; min-width: 28px;")
+        self._brightness_slider.valueChanged.connect(
+            lambda v: (
+                self._bright_val_lbl.setText(str(v)),
+                self._brightness_timer.start(),
+            )
+        )
+        row_bright.addWidget(self._brightness_slider)
+        row_bright.addWidget(self._bright_val_lbl)
+        row_bright.addStretch()
+        ctrl_vl.addLayout(row_bright)
+
+        ctrl_group.setLayout(ctrl_vl)
+        vl.addWidget(ctrl_group)
+
+        # ── Device Options ────────────────────────────────────────────────
+        opt_group = QGroupBox("⚙️ Device Options")
+        opt_group.setStyleSheet(_GROUP_BLUE_SS)
+        opt_vl = QVBoxLayout()
+        opt_vl.setContentsMargins(12, 10, 12, 12)
+        opt_vl.setSpacing(10)
+
+        # Row A: Speed boost (disable/enable animations)
+        row_anim = QHBoxLayout()
+        row_anim.setSpacing(8)
+        lbl_anim = QLabel("🚀 Speed boost:")
+        lbl_anim.setStyleSheet(_LABEL_SS)
+        lbl_anim.setFixedWidth(120)
+        row_anim.addWidget(lbl_anim)
+        btn_anim_on = QPushButton("Disable Animations")
+        btn_anim_on.setStyleSheet(_BTN_ON_SS)
+        btn_anim_on.setFixedHeight(28)
+        btn_anim_on.setToolTip(
+            "adb shell settings put global window_animation_scale 0\n"
+            "adb shell settings put global transition_animation_scale 0\n"
+            "adb shell settings put global animator_duration_scale 0"
+        )
+        btn_anim_on.clicked.connect(lambda: self._device_action("disable_animations"))
+        row_anim.addWidget(btn_anim_on)
+        btn_anim_off = QPushButton("Enable Animations")
+        btn_anim_off.setStyleSheet(_BTN_OFF_SS)
+        btn_anim_off.setFixedHeight(28)
+        btn_anim_off.setToolTip("Restore animation scales to 1")
+        btn_anim_off.clicked.connect(lambda: self._device_action("enable_animations"))
+        row_anim.addWidget(btn_anim_off)
+        row_anim.addStretch()
+        opt_vl.addLayout(row_anim)
+
+        # Row B: Dark mode
+        row_dark = QHBoxLayout()
+        row_dark.setSpacing(8)
+        lbl_dark = QLabel("🌙 Dark Mode:")
+        lbl_dark.setStyleSheet(_LABEL_SS)
+        lbl_dark.setFixedWidth(120)
+        row_dark.addWidget(lbl_dark)
+        btn_dark_on = QPushButton("ON")
+        btn_dark_on.setStyleSheet(_BTN_ON_SS)
+        btn_dark_on.setFixedHeight(28)
+        btn_dark_on.setToolTip("adb shell cmd uimode night yes")
+        btn_dark_on.clicked.connect(lambda: self._device_action("dark_mode_on"))
+        row_dark.addWidget(btn_dark_on)
+        btn_dark_off = QPushButton("OFF")
+        btn_dark_off.setStyleSheet(_BTN_OFF_SS)
+        btn_dark_off.setFixedHeight(28)
+        btn_dark_off.setToolTip("adb shell cmd uimode night no")
+        btn_dark_off.clicked.connect(lambda: self._device_action("dark_mode_off"))
+        row_dark.addWidget(btn_dark_off)
+        row_dark.addStretch()
+        opt_vl.addLayout(row_dark)
+
+        # Row C: Stay on while charging
+        row_stay = QHBoxLayout()
+        row_stay.setSpacing(8)
+        lbl_stay = QLabel("🔌 Stay on (charging):")
+        lbl_stay.setStyleSheet(_LABEL_SS)
+        lbl_stay.setFixedWidth(150)
+        row_stay.addWidget(lbl_stay)
+        btn_stay_on = QPushButton("ON")
+        btn_stay_on.setStyleSheet(_BTN_ON_SS)
+        btn_stay_on.setFixedHeight(28)
+        btn_stay_on.setToolTip("adb shell settings put global stay_on_while_plugged_in 3")
+        btn_stay_on.clicked.connect(lambda: self._device_action("stay_on_charging_on"))
+        row_stay.addWidget(btn_stay_on)
+        btn_stay_off = QPushButton("OFF")
+        btn_stay_off.setStyleSheet(_BTN_OFF_SS)
+        btn_stay_off.setFixedHeight(28)
+        btn_stay_off.setToolTip("adb shell settings put global stay_on_while_plugged_in 0")
+        btn_stay_off.clicked.connect(lambda: self._device_action("stay_on_charging_off"))
+        row_stay.addWidget(btn_stay_off)
+        row_stay.addStretch()
+        opt_vl.addLayout(row_stay)
+
+        opt_group.setLayout(opt_vl)
+        vl.addWidget(opt_group)
+
+        # ── Device Actions ─────────────────────────────────────────────────
+        setup_group = QGroupBox("🛠 Device Actions")
+        setup_group.setStyleSheet(_GROUP_BLUE_SS)
+        setup_vl = QVBoxLayout()
+        setup_vl.setContentsMargins(12, 10, 12, 10)
+        setup_vl.setSpacing(8)
+
+        setup_btn_row1 = QHBoxLayout()
+        setup_btn_row1.setSpacing(10)
+
+        self._disable_play_btn = QPushButton("🚫  Disable Play Store")
+        self._disable_play_btn.setStyleSheet(_BTN_SS)
+        self._disable_play_btn.setMinimumHeight(32)
+        self._disable_play_btn.setToolTip(
+            "Disable Google Play Store on all devices\n"
+            "adb shell pm disable-user --user 0 com.android.vending"
+        )
+        self._disable_play_btn.clicked.connect(lambda: self._run_play_store(enable=False))
+        setup_btn_row1.addWidget(self._disable_play_btn, 1)
+
+        self._enable_play_btn = QPushButton("✅  Enable Play Store")
+        self._enable_play_btn.setStyleSheet(_BTN_SS)
+        self._enable_play_btn.setMinimumHeight(32)
+        self._enable_play_btn.setToolTip(
+            "Enable Google Play Store on all devices\n"
+            "adb shell pm enable com.android.vending"
+        )
+        self._enable_play_btn.clicked.connect(lambda: self._run_play_store(enable=True))
+        setup_btn_row1.addWidget(self._enable_play_btn, 1)
+
+        self._setup_keyboard_btn = QPushButton("⌨️  Setup Keyboard")
+        self._setup_keyboard_btn.setStyleSheet(_BTN_SS)
+        self._setup_keyboard_btn.setMinimumHeight(32)
+        self._setup_keyboard_btn.setToolTip("Install ADB keyboard on all devices in the table")
+        self._setup_keyboard_btn.clicked.connect(self.setup_keyboard_requested.emit)
+        setup_btn_row1.addWidget(self._setup_keyboard_btn, 1)
+
+        self._install_chrome_btn = QPushButton("🌐  Install Chrome")
+        self._install_chrome_btn.setStyleSheet(_BTN_SS)
+        self._install_chrome_btn.setMinimumHeight(32)
+        self._install_chrome_btn.setToolTip("Install Chrome on all devices in the table")
+        self._install_chrome_btn.clicked.connect(self.install_chrome_requested.emit)
+        setup_btn_row1.addWidget(self._install_chrome_btn, 1)
+
+        self._reboot_btn = QPushButton("🔁  Reboot Device")
+        self._reboot_btn.setStyleSheet(_BTN_SS)
+        self._reboot_btn.setMinimumHeight(32)
+        self._reboot_btn.setToolTip("Reboot all devices in the table  (adb reboot)")
+        self._reboot_btn.clicked.connect(lambda: self._device_action("reboot"))
+        setup_btn_row1.addWidget(self._reboot_btn, 1)
+
+        setup_vl.addLayout(setup_btn_row1)
+
+        setup_group.setLayout(setup_vl)
+        vl.addWidget(setup_group)
 
         # ── Save button row ──────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -138,11 +518,88 @@ class SettingsWidget(QWidget):
 
         save_btn = QPushButton("💾 Save settings")
         save_btn.setFixedWidth(140)
+        save_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #f57c00; border-radius: 4px;"
+            " padding: 5px 14px; background: #fff3e0; color: #e65100;"
+            " font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #ffe0b2; }"
+            "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
+        )
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)
 
-        root.addLayout(btn_row)
-        root.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        vl.addLayout(btn_row)
+        vl.addStretch()
+
+        scroll.setWidget(inner)
+        root.addWidget(scroll)
+
+    def _get_serials(self) -> list[str]:
+        return self._get_serials_fn() if callable(self._get_serials_fn) else []
+
+    def _apply_screen_lock(self):
+        serials = self._get_serials()
+        if not serials:
+            self._status_label.setStyleSheet("color: #c62828; font-size: 12px;")
+            self._status_label.setText("⚠ No devices found.")
+            return
+        idx = self._lock_combo.currentIndex()
+        action = "screen_lock_none" if idx == 0 else "screen_lock_swipe"
+        self._device_action(action)
+
+    def _apply_brightness(self):
+        serials = self._get_serials()
+        if not serials:
+            self._status_label.setStyleSheet("color: #c62828; font-size: 12px;")
+            self._status_label.setText("⚠ No devices found.")
+            return
+        # Map 0–100 slider value to 0–255 Android brightness
+        pct = self._brightness_slider.value()
+        val = round(pct * 255 / 100)
+        w = _DeviceControlWorker(serials, "brightness", value=val)
+        self._start_worker(w)
+
+    def _device_action(self, action: str):
+        serials = self._get_serials()
+        if not serials:
+            self._status_label.setStyleSheet("color: #c62828; font-size: 12px;")
+            self._status_label.setText("⚠ No devices found.")
+            return
+        w = _DeviceControlWorker(serials, action)
+        self._start_worker(w)
+
+    def _start_worker(self, w: QThread):
+        self._status_label.setStyleSheet("color: #555; font-size: 12px;")
+        self._status_label.setText("⏳ Running…")
+        w.finished.connect(lambda msg: (
+            self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;"),
+            self._status_label.setText(msg.split("\n")[0]),
+        ))
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        self._workers.append(w)
+        w.start()
+
+    def _run_play_store(self, enable: bool):
+        serials = self._get_serials_fn() if callable(self._get_serials_fn) else []
+        if not serials:
+            self._status_label.setStyleSheet("color: #c62828; font-size: 12px;")
+            self._status_label.setText("⚠ No devices found in table.")
+            return
+        btn = self._enable_play_btn if enable else self._disable_play_btn
+        btn.setEnabled(False)
+        w = _PlayStoreWorker(serials, enable)
+        w.progress.connect(lambda msg: (
+            self._status_label.setStyleSheet("color: #555; font-size: 12px;"),
+            self._status_label.setText(msg),
+        ))
+        w.finished.connect(lambda msg: (
+            self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;"),
+            self._status_label.setText(msg),
+        ))
+        w.finished.connect(lambda: btn.setEnabled(True))
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        self._workers.append(w)
+        w.start()
 
     def _on_save(self):
         try:

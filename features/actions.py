@@ -43,8 +43,8 @@ _GROUP_SS = """
     QGroupBox {
         font-weight: bold;
         font-size: 12px;
-        border: 1px solid #c8d0e0;
-        border-radius: 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
         margin-top: 8px;
         padding-top: 6px;
         background-color: #f8f9ff;
@@ -74,7 +74,7 @@ _BTN_PRIMARY_SS = (
 )
 
 _BTN_SECONDARY_SS = (
-    "QPushButton { border: 1px solid #bdbdbd; border-radius: 4px;"
+    "QPushButton { border: 1px solid #ccc; border-radius: 4px;"
     " padding: 5px 14px; background: #f0f0f0; font-size: 11px; }"
     "QPushButton:hover { background: #e0e0e0; }"
     "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
@@ -170,18 +170,13 @@ class _PlayStoreWorker(QThread):
                 self.progress.emit(f"❌ {serial}: {e}")
         self.finished.emit(f"{label} Play Store — {ok}/{len(self.serials)} devices")
 
-
 class ActionsWidget(QWidget):
     status_update = Signal(str)
-    setup_keyboard_requested = Signal()
-    install_chrome_requested = Signal()
-    get_all_serials_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._serial: str = ""
         self._workers: list[QThread] = []
-        self._get_serials_fn = None   # set by gui after construction
         self._build_ui()
 
     def set_device(self, serial: str):
@@ -209,54 +204,6 @@ class ActionsWidget(QWidget):
         ivl = QVBoxLayout(inner)
         ivl.setContentsMargins(0, 0, 4, 0)
         ivl.setSpacing(8)
-
-        # ── Device Setup group ────────────────────────────────────────────
-        setup_group = QGroupBox("🛠 Device Setup")
-        setup_group.setStyleSheet(_GROUP_SS)
-        setup_vl = QVBoxLayout()
-        setup_vl.setContentsMargins(12, 10, 12, 10)
-        setup_vl.setSpacing(8)
-
-        setup_btn_row = QHBoxLayout()
-        setup_btn_row.setSpacing(10)
-
-        self._disable_play_btn = QPushButton("🚫  Disable Play Store")
-        self._disable_play_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        self._disable_play_btn.setMinimumHeight(32)
-        self._disable_play_btn.setToolTip(
-            "Disable Google Play Store on all devices\n"
-            "adb shell pm disable-user --user 0 com.android.vending"
-        )
-        self._disable_play_btn.clicked.connect(lambda: self._run_play_store(enable=False))
-        setup_btn_row.addWidget(self._disable_play_btn, 1)
-
-        self._enable_play_btn = QPushButton("✅  Enable Play Store")
-        self._enable_play_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        self._enable_play_btn.setMinimumHeight(32)
-        self._enable_play_btn.setToolTip(
-            "Enable Google Play Store on all devices\n"
-            "adb shell pm enable com.android.vending"
-        )
-        self._enable_play_btn.clicked.connect(lambda: self._run_play_store(enable=True))
-        setup_btn_row.addWidget(self._enable_play_btn, 1)
-
-        self._setup_keyboard_btn = QPushButton("⌨️  Setup Keyboard")
-        self._setup_keyboard_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        self._setup_keyboard_btn.setMinimumHeight(32)
-        self._setup_keyboard_btn.setToolTip("Install ADB keyboard on all devices in the table")
-        self._setup_keyboard_btn.clicked.connect(self.setup_keyboard_requested.emit)
-        setup_btn_row.addWidget(self._setup_keyboard_btn, 1)
-
-        self._install_chrome_btn = QPushButton("🌐  Install Chrome")
-        self._install_chrome_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        self._install_chrome_btn.setMinimumHeight(32)
-        self._install_chrome_btn.setToolTip("Install Chrome on all devices in the table")
-        self._install_chrome_btn.clicked.connect(self.install_chrome_requested.emit)
-        setup_btn_row.addWidget(self._install_chrome_btn, 1)
-
-        setup_vl.addLayout(setup_btn_row)
-        setup_group.setLayout(setup_vl)
-        ivl.addWidget(setup_group)
 
         # ── Open URL group ────────────────────────────────────────────────
         url_group = QGroupBox("🌐 Open URL")
@@ -359,21 +306,6 @@ class ActionsWidget(QWidget):
         self._login_gmail_btn.setEnabled(False)
         w = _LoginGmailWorker(self._serial, email, password, self._clear_account_cb.isChecked())
         w.finished.connect(lambda: self._login_gmail_btn.setEnabled(bool(self._serial)))
-        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
-        self._workers.append(w)
-        w.start()
-
-    def _run_play_store(self, enable: bool):
-        serials = self._get_serials_fn() if callable(self._get_serials_fn) else []
-        if not serials:
-            self.status_update.emit("⚠ No devices found in table.")
-            return
-        btn = self._enable_play_btn if enable else self._disable_play_btn
-        btn.setEnabled(False)
-        w = _PlayStoreWorker(serials, enable)
-        w.progress.connect(self.status_update)
-        w.finished.connect(self.status_update)
-        w.finished.connect(lambda: btn.setEnabled(True))
         w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
         self._workers.append(w)
         w.start()

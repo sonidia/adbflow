@@ -1,8 +1,3 @@
-"""
-Device Information tab.
-Shows detailed hardware / SIM / network info for the selected device,
-fetched on-demand via ADB — uses every available method to maximise data coverage.
-"""
 from __future__ import annotations
 
 import subprocess, os, re, time
@@ -36,14 +31,11 @@ def _run(serial: str, *args: str, timeout: int = 10) -> str:
     except Exception:
         return ""
 
-
 def _shell(serial: str, cmd: str, timeout: int = 10) -> str:
     return _run(serial, "shell", cmd, timeout=timeout)
 
-
 def _prop(serial: str, key: str) -> str:
     return _shell(serial, f"getprop {key}")
-
 
 def _first(*values: str) -> str:
     """Return the first non-empty, non-placeholder value."""
@@ -54,11 +46,9 @@ def _first(*values: str) -> str:
             return v
     return ""
 
-
 def _re_first(pattern: str, text: str, flags: int = 0) -> str:
     m = re.search(pattern, text, flags)
     return m.group(1).strip() if m else ""
-
 
 # ── Background fetch worker ──────────────────────────────────────────────
 class _FetchWorker(QThread):
@@ -201,28 +191,53 @@ class _FetchWorker(QThread):
             # ── GPS location ──────────────────────────────────────────────
             lat = lon = ""
             loc = _shell(s, "dumpsys location", timeout=8)
-            # Pattern: lat=12.345 / latitude=12.345
-            for lat_pat in [
-                r"lat(?:itude)?\s*[=:]\s*([-\d.]+)",
-                r"mLastKnownLocation.*?lat\s*[=:]\s*([-\d.]+)",
+
+            # Strategy 1: Look for "last known location" blocks with lat/lng
+            # Android 9+: "mLastKnownLocation: Location[network X.XXX,Y.YYY ...]"
+            # Android 11+: "last location=Location[gps lat=X.XX lng=Y.YY ...]"
+            for lat_pat, lon_pat in [
+                # "lat=12.345 lng=67.890" or "lat=12.345,lon=67.890"
+                (r"lat\s*=\s*([-\d.]+)", r"l(?:ng|on)\s*=\s*([-\d.]+)"),
+                # "Location[gps 12.345,67.890 ...]"
+                (r"Location\[\w[\w\s]*?([-\d.]+),([-\d.]+)", None),
+                # generic latitude/longitude= lines
+                (r"latitude\s*[=:]\s*([-\d.]+)", r"longitude\s*[=:]\s*([-\d.]+)"),
             ]:
-                m = re.search(lat_pat, loc, re.IGNORECASE | re.DOTALL)
-                if m:
-                    lat = m.group(1)
-                    break
-            for lon_pat in [
-                r"lon(?:gitude)?\s*[=:]\s*([-\d.]+)",
-                r"mLastKnownLocation.*?lon(?:gitude)?\s*[=:]\s*([-\d.]+)",
-            ]:
-                m = re.search(lon_pat, loc, re.IGNORECASE | re.DOTALL)
-                if m:
-                    lon = m.group(1)
-                    break
-            # Compact form: Location[gps 12.345,-67.890]
+                if lon_pat is None:
+                    # combined pattern (lat and lon in same group)
+                    m = re.search(lat_pat, loc, re.IGNORECASE | re.DOTALL)
+                    if m:
+                        lat, lon = m.group(1), m.group(2)
+                        break
+                else:
+                    ml = re.search(lat_pat, loc, re.IGNORECASE | re.DOTALL)
+                    mo = re.search(lon_pat, loc, re.IGNORECASE | re.DOTALL)
+                    if ml and mo:
+                        lat, lon = ml.group(1), mo.group(1)
+                        break
+
+            # Strategy 2: Try dumpsys location providers directly
             if not lat:
-                m = re.search(r"Location\[[\w\s]+([-\d.]+),([-\d.]+)", loc)
-                if m:
-                    lat, lon = m.group(1), m.group(2)
+                for provider in ("gps", "network", "fused"):
+                    prov_out = _shell(s, f"dumpsys location | grep -A 5 'last location'", timeout=6)
+                    m_lat = re.search(r"lat(?:itude)?\s*[=:]\s*([-\d.]+)", prov_out, re.IGNORECASE)
+                    m_lon = re.search(r"l(?:ng|on)(?:gitude)?\s*[=:]\s*([-\d.]+)", prov_out, re.IGNORECASE)
+                    if m_lat and m_lon:
+                        lat, lon = m_lat.group(1), m_lon.group(1)
+                        break
+
+            # Strategy 3: Try reading last known location via content provider (Android 8+)
+            if not lat:
+                try:
+                    gps_raw = _shell(s,
+                        "content query --uri content://com.google.android.gsf.gservices/prefix --where \"name='location'\" 2>/dev/null | head -5",
+                        timeout=5)
+                    m_lat = re.search(r"lat(?:itude)?\s*[=:]\s*([-\d.]+)", gps_raw, re.IGNORECASE)
+                    m_lon = re.search(r"l(?:ng|on)(?:gitude)?\s*[=:]\s*([-\d.]+)", gps_raw, re.IGNORECASE)
+                    if m_lat and m_lon:
+                        lat, lon = m_lat.group(1), m_lon.group(1)
+                except Exception:
+                    pass
 
             # ── WiFi SSID ─────────────────────────────────────────────────
             wifi_name = ""
@@ -274,8 +289,6 @@ class _FetchWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-
-# ── Country / carrier data ────────────────────────────────────────────────
 _COUNTRIES = [
     "United States", "United Kingdom", "Canada", "Australia",
     "Germany", "France", "Japan", "South Korea", "China",
@@ -296,7 +309,6 @@ _CARRIERS: dict[str, list[str]] = {
     "default": ["Carrier A", "Carrier B", "Carrier C"],
 }
 
-
 def _adb_info(serial: str, *args: str, timeout: int = 15) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["adb", "-s", serial, *args],
@@ -306,11 +318,9 @@ def _adb_info(serial: str, *args: str, timeout: int = 15) -> subprocess.Complete
         timeout=timeout,
     )
 
-
 def _shell_info(serial: str, cmd: str) -> str:
     r = _adb_info(serial, "shell", cmd)
     return (r.stdout or "").strip()
-
 
 class _ChangeDeviceWorker(QThread):
     finished = Signal()
@@ -377,7 +387,6 @@ class _ChangeDeviceWorker(QThread):
         except Exception:
             pass
 
-
 class _ChangeSimWorker(QThread):
     finished = Signal()
 
@@ -402,14 +411,12 @@ class _ChangeSimWorker(QThread):
         except Exception:
             pass
 
-
-# ── Styles ────────────────────────────────────────────────────────────────
 _GROUP_SS = """
     QGroupBox {
         font-weight: bold;
         font-size: 12px;
-        border: 1px solid #c8d0e0;
-        border-radius: 8px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
         margin-top: 8px;
         padding-top: 4px;
         background-color: #f8f9ff;
@@ -424,7 +431,7 @@ _GROUP_SS = """
 
 _FIELD_SS = (
     "QLineEdit {"
-    "  border: 1px solid #dce3f0;"
+    "  border: 1px solid #ddd;"
     "  border-radius: 4px;"
     "  padding: 2px 6px;"
     "  background: #ffffff;"
@@ -440,7 +447,7 @@ _LABEL_SS = "color: #555; font-size: 11px; font-weight: bold;"
 
 _INPUT_SS = (
     "QLineEdit {"
-    "  border: 1px solid #dce3f0; border-radius: 4px;"
+    "  border: 1px solid #ddd; border-radius: 4px;"
     "  padding: 2px 6px; background: #ffffff; color: #212121;"
     "  font-size: 11px; min-height: 20px;"
     "}"
@@ -449,7 +456,7 @@ _INPUT_SS = (
 
 _COMBO_SS = (
     "QComboBox {"
-    "  border: 1px solid #dce3f0; border-radius: 4px;"
+    "  border: 1px solid #ddd; border-radius: 4px;"
     "  padding: 2px 6px; background: #ffffff; color: #212121;"
     "  font-size: 11px; min-height: 22px;"
     "}"
@@ -465,14 +472,13 @@ _BTN_PRIMARY_SS = (
 )
 
 _BTN_SECONDARY_SS = (
-    "QPushButton { border: 1px solid #bdbdbd; border-radius: 4px;"
+    "QPushButton { border: 1px solid #ddd; border-radius: 4px;"
     " padding: 5px 14px; background: #f0f0f0; font-size: 11px; }"
     "QPushButton:hover { background: #e0e0e0; }"
     "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
 )
 
 _CB_SS = "QCheckBox { font-size: 11px; color: #333; }"
-
 
 # ── DeviceInfoWidget ─────────────────────────────────────────────────────
 class DeviceInfoWidget(QWidget):
@@ -569,15 +575,15 @@ class DeviceInfoWidget(QWidget):
             g = QGroupBox(title)
             g.setStyleSheet(_GROUP_SS)
             fl = QFormLayout()
-            fl.setContentsMargins(12, 10, 12, 10)
-            fl.setSpacing(6)
+            fl.setContentsMargins(12, 6, 12, 6)
+            fl.setSpacing(4)
             fl.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
             fl.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
             g.setLayout(fl)
             return g, fl
 
         # ── Group 1: Device Information ──────────────────────────────────
-        g1, f1 = _group("Device Information")
+        g1, f1 = _group("📱 Device Information")
         self._f_brand        = _field()
         self._f_model        = _field()
         self._f_manufacturer = _field()
@@ -588,40 +594,39 @@ class DeviceInfoWidget(QWidget):
         self._f_resolution   = _field()
         self._f_ram          = _field()
 
-        f1.addRow(_lbl("Brand"),        self._f_brand)
-        f1.addRow(_lbl("Model"),        self._f_model)
-        f1.addRow(_lbl("Manufacturer"), self._f_manufacturer)
-        f1.addRow(_lbl("Android OS"),   self._f_android)
-        f1.addRow(_lbl("SDK Version"),  self._f_sdk)
-        f1.addRow(_lbl("Serial No."),   self._f_serial_no)
-        f1.addRow(_lbl("CPU ABI"),      self._f_cpu_abi)
-        f1.addRow(_lbl("Resolution"),   self._f_resolution)
-        f1.addRow(_lbl("RAM"),          self._f_ram)
-        inner_vl.addWidget(g1)
-
+        f1.addRow(_lbl("🏷 Brand"),        self._f_brand)
+        f1.addRow(_lbl("📋 Model"),        self._f_model)
+        f1.addRow(_lbl("🏭 Manufacturer"), self._f_manufacturer)
+        f1.addRow(_lbl("🤖 Android OS"),   self._f_android)
+        f1.addRow(_lbl("🔧 SDK Version"),  self._f_sdk)
+        f1.addRow(_lbl("🔢 Serial No."),   self._f_serial_no)
+        f1.addRow(_lbl("💻 CPU ABI"),      self._f_cpu_abi)
+        f1.addRow(_lbl("🖥 Resolution"),   self._f_resolution)
+        f1.addRow(_lbl("🧠 RAM"),          self._f_ram)
         # ── Group 2: SIM / Telephony ─────────────────────────────────────
-        g2, f2 = _group("SIM / Telephony")
+        g2, f2 = _group("📡 SIM / Telephony")
         self._f_imei    = _field()
         self._f_simcode = _field()
         self._f_iccid   = _field()
         self._f_subid   = _field()
         self._f_phone   = _field()
 
-        f2.addRow(_lbl("IMEI"),              self._f_imei)
-        f2.addRow(_lbl("SIM CODE"),          self._f_simcode)
-        f2.addRow(_lbl("ICCID"),             self._f_iccid)
-        f2.addRow(_lbl("Sim Subscriber ID"), self._f_subid)
-        f2.addRow(_lbl("Phone Number"),      self._f_phone)
-        inner_vl.addWidget(g2)
+        f2.addRow(_lbl("🔑 IMEI"),              self._f_imei)
+        f2.addRow(_lbl("📶 SIM Code"),           self._f_simcode)
+        f2.addRow(_lbl("🪪 ICCID"),              self._f_iccid)
+        f2.addRow(_lbl("🆔 Subscriber ID"),      self._f_subid)
+        f2.addRow(_lbl("📞 Phone Number"),       self._f_phone)
 
         # ── Group 3: Location / Network ──────────────────────────────────
-        g3, f3 = _group("Location / Network")
+        g3, f3 = _group("🌐 Location / Network")
+        # Make g3 compact — only 3 rows, don't stretch vertically
+        g3.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._f_lat  = _field()
         self._f_lon  = _field()
         self._f_wifi = _field()
 
-        f3.addRow(_lbl("Latitude"),  self._f_lat)
-        f3.addRow(_lbl("Longitude"), self._f_lon)
+        f3.addRow(_lbl("📍 Latitude"),  self._f_lat)
+        f3.addRow(_lbl("📍 Longitude"), self._f_lon)
 
         # WiFi row with manual checkbox
         wifi_row = QHBoxLayout()
@@ -633,7 +638,7 @@ class DeviceInfoWidget(QWidget):
         wifi_row.addWidget(self._manual_wifi_cb)
         wifi_w = QWidget()
         wifi_w.setLayout(wifi_row)
-        f3.addRow(_lbl("Wifi Name"), wifi_w)
+        f3.addRow(_lbl("📶 WiFi Name"), wifi_w)
 
         self._wifi_manual_input = QLineEdit()
         self._wifi_manual_input.setPlaceholderText("Enter Wifi name manually…")
@@ -643,7 +648,22 @@ class DeviceInfoWidget(QWidget):
             lambda: self.load_device(self._serial)
         )
         f3.addRow(QLabel(""), self._wifi_manual_input)
-        inner_vl.addWidget(g3)
+
+        # ── 2-column top layout: Device Info (left) | SIM + Location (right) ──
+        top_cols = QHBoxLayout()
+        top_cols.setSpacing(8)
+        top_cols.addWidget(g1, 1)
+
+        right_col_w = QWidget()
+        right_col_vl = QVBoxLayout(right_col_w)
+        right_col_vl.setContentsMargins(0, 0, 0, 0)
+        right_col_vl.setSpacing(8)
+        right_col_vl.addWidget(g2)
+        right_col_vl.addWidget(g3)
+        right_col_vl.addStretch()           # push g2/g3 to top, remove dead space
+
+        top_cols.addWidget(right_col_w, 1)
+        inner_vl.addLayout(top_cols)
 
         # ── Group 4: Phone Settings ──────────────────────────────────────
         ps_group = QGroupBox("📱 Phone Settings")
@@ -726,45 +746,7 @@ class DeviceInfoWidget(QWidget):
 
         self._on_country_changed(self._country_combo.currentText())
 
-        # ── Group 5: Device Filter ───────────────────────────────────────
-        df_group = QGroupBox("🔍 Device Filter")
-        df_group.setStyleSheet(_GROUP_SS)
-        df_fl = QFormLayout()
-        df_fl.setContentsMargins(12, 10, 12, 10)
-        df_fl.setSpacing(6)
-        df_fl.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        df_fl.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        def _flbl(t: str) -> QLabel:
-            l = QLabel(t)
-            l.setStyleSheet(_LABEL_SS)
-            return l
-
-        self._filter_brand = QLineEdit()
-        self._filter_brand.setPlaceholderText("e.g. Samsung  (blank = all)")
-        self._filter_brand.setStyleSheet(_INPUT_SS)
-
-        self._filter_model = QLineEdit()
-        self._filter_model.setPlaceholderText("e.g. SM-G991  (blank = all)")
-        self._filter_model.setStyleSheet(_INPUT_SS)
-
-        self._filter_os = QLineEdit()
-        self._filter_os.setPlaceholderText("e.g. 12  (blank = all)")
-        self._filter_os.setStyleSheet(_INPUT_SS)
-
-        df_fl.addRow(_flbl("Brand:"),       self._filter_brand)
-        df_fl.addRow(_flbl("Model:"),       self._filter_model)
-        df_fl.addRow(_flbl("Android OS:"),  self._filter_os)
-        df_group.setLayout(df_fl)
-        inner_vl.addWidget(df_group)
-
-        # ── Group 6: Actions ─────────────────────────────────────────────
-        act_group = QGroupBox("⚡ Actions")
-        act_group.setStyleSheet(_GROUP_SS)
-        act_vl = QVBoxLayout()
-        act_vl.setContentsMargins(12, 10, 12, 10)
-        act_vl.setSpacing(8)
-
+        # ── Actions ──────────────────────────────────────────────────────
         act_btn_row = QHBoxLayout()
         act_btn_row.setSpacing(10)
 
@@ -782,9 +764,7 @@ class DeviceInfoWidget(QWidget):
         self._change_sim_btn.clicked.connect(self._run_change_sim)
         act_btn_row.addWidget(self._change_sim_btn, 1)
 
-        act_vl.addLayout(act_btn_row)
-        act_group.setLayout(act_vl)
-        inner_vl.addWidget(act_group)
+        inner_vl.addLayout(act_btn_row)
 
         inner_vl.addStretch()
 
@@ -876,9 +856,6 @@ class DeviceInfoWidget(QWidget):
             "random_carrier": self._cb_random_carr.isChecked(),
             "change_tz":      self._cb_change_tz.isChecked(),
             "fake_location":  self._cb_fake_loc.isChecked(),
-            "filter_brand":   self._filter_brand.text().strip(),
-            "filter_model":   self._filter_model.text().strip(),
-            "filter_os":      self._filter_os.text().strip(),
         }
 
     def _run_change_device(self):

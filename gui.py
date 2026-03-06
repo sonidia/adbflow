@@ -26,6 +26,7 @@ from features.settings import SettingsWidget
 from features.proxy import ProxyWidget
 from features.info import DeviceInfoWidget
 from features.actions import ActionsWidget
+from features.apps import ApplicationWidget
 
 class Worker(QThread):
     progress = Signal(str)
@@ -183,6 +184,9 @@ class CookieLoaderGUI(QWidget):
         self.settings_widget.settings_saved.connect(
             lambda _: self.update_status("✅ Settings saved")
         )
+        self.settings_widget.setup_keyboard_requested.connect(self.setup_keyboard_for_all)
+        self.settings_widget.install_chrome_requested.connect(self.install_chrome_for_all)
+        self.settings_widget._get_serials_fn = self._collect_serials
 
         self.proxy_widget = ProxyWidget()
         self.proxy_widget.status_update.connect(self.update_status)
@@ -192,9 +196,8 @@ class CookieLoaderGUI(QWidget):
         self.info_widget.status_update.connect(self.update_status)
         self.actions_widget = ActionsWidget()
         self.actions_widget.status_update.connect(self.update_status)
-        self.actions_widget.setup_keyboard_requested.connect(self.setup_keyboard_for_all)
-        self.actions_widget.install_chrome_requested.connect(self.install_chrome_for_all)
-        self.actions_widget._get_serials_fn = self._collect_serials
+        self.apps_widget = ApplicationWidget()
+        self.apps_widget.status_update.connect(self.update_status)
 
         # ── Left navigation panel ────────────────────────────────────────
         left_panel = QWidget()
@@ -250,6 +253,10 @@ class CookieLoaderGUI(QWidget):
         self.actions_button = _nav_btn('⚡ Actions')
         self.actions_button.clicked.connect(lambda: self._open_tab(4))
         left_layout.addWidget(self.actions_button)
+
+        self.apps_button = _nav_btn('📦 Apps')
+        self.apps_button.clicked.connect(lambda: self._open_tab(5))
+        left_layout.addWidget(self.apps_button)
 
         self.run_ads_button = QPushButton('Run Ads')
         self.run_ads_button.clicked.connect(self.run_ads_for_all)
@@ -345,7 +352,7 @@ class CookieLoaderGUI(QWidget):
         )
         self.behavior_mode_combo.setStyleSheet(
             "QComboBox {"
-            "  border: 1px solid #bdbdbd; border-radius: 4px;"
+            "  border: 1px solid #ddd; border-radius: 4px;"
             "  padding: 2px 6px; background: #ffffff; color: #212121;"
             "  font-size: 11px; min-height: 20px; max-height: 28px;"
             "}"
@@ -428,19 +435,22 @@ class CookieLoaderGUI(QWidget):
         self.view_log_button.toggled.connect(log_group.setVisible)
         simulator_layout.addWidget(log_group)
 
-        self.tab_body.addWidget(simulator_page)   # index 0
+        self.tab_body.addWidget(simulator_page)
 
-        # Page 1 – Proxy
-        self.tab_body.addWidget(self.proxy_widget)  # index 1
+        # Page 1 – Proxy      # index 1
+        self.tab_body.addWidget(self.proxy_widget)
 
-        # Page 2 – Settings
-        self.tab_body.addWidget(self.settings_widget)  # index 2
+        # Page 2 – Settings      # index 2
+        self.tab_body.addWidget(self.settings_widget)
 
-        # Page 3 – Device Info
-        self.tab_body.addWidget(self.info_widget)   # index 3
+        # Page 3 – Device Info      # index 3
+        self.tab_body.addWidget(self.info_widget)
 
-        # Page 4 – Actions
-        self.tab_body.addWidget(self.actions_widget)  # index 4
+        # Page 4 – Actions      # index 4
+        self.tab_body.addWidget(self.actions_widget)
+
+        # Page 5 – Applications      # index 5
+        self.tab_body.addWidget(self.apps_widget)
 
         right_layout.addWidget(self.tab_body)
 
@@ -453,6 +463,9 @@ class CookieLoaderGUI(QWidget):
 
         # Auto-load Info when the user switches to the Info tab
         self.tab_body.currentChanged.connect(self._on_tab_changed)
+
+        # Default to Info tab on startup
+        self._open_tab(3)
 
     def update_status(self, text):
         if text:
@@ -479,6 +492,7 @@ class CookieLoaderGUI(QWidget):
             self.settings_button,
             self.info_button,
             self.actions_button,
+            self.apps_button,
         ]
         self.current_active_tab = _tab_buttons[index]
         self.current_active_tab.setChecked(True)
@@ -534,13 +548,16 @@ class CookieLoaderGUI(QWidget):
         serial_item = self.ads_table.table.item(row, 2)
         serial = serial_item.text().strip() if serial_item else ""
 
-        # Always keep Info/Actions in sync
+        # Always keep Info/Actions/Apps in sync
         self.actions_widget.set_device(serial)
         self.info_widget.set_device(serial)
+        self.apps_widget.set_device(serial)
 
         # Only auto-load Info if that tab is currently open
         if self.tab_body.isVisible() and self.tab_body.currentIndex() == 3:
             self.info_widget.load_device(serial)
+        elif self.tab_body.isVisible() and self.tab_body.currentIndex() == 5:
+            self.apps_widget.load_device(serial)
         else:
             # Store serial so it loads when user switches to the Info tab
             self.info_widget._serial = serial
@@ -549,9 +566,11 @@ class CookieLoaderGUI(QWidget):
             )
 
     def _on_tab_changed(self, index: int):
-        """When the user switches to the Info tab, trigger a load if a device is set."""
+        """When the user switches to the Info or Apps tab, trigger a load if a device is set."""
         if index == 3 and self.info_widget._serial:
             self.info_widget.load_device(self.info_widget._serial)
+        elif index == 5 and self.apps_widget._serial:
+            self.apps_widget.load_device(self.apps_widget._serial)
 
     def stop_ads(self):
         """Signal the running worker to stop after the current device."""

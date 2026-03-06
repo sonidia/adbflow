@@ -280,3 +280,5 @@ Check the console output for detailed logs during automation.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+<!-- https://cdn-icons-png.flaticon.com/32/3064/3064836.png -->

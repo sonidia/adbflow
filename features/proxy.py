@@ -52,7 +52,7 @@ class ProxyWidget(QWidget):
             QGroupBox {
                 font-weight: bold;
                 font-size: 12px;
-                border: 1px solid #ccc;
+                border: 1px solid #ddd;
                 border-radius: 6px;
                 margin-top: 6px;
                 padding-top: 4px;
@@ -79,7 +79,7 @@ class ProxyWidget(QWidget):
         self._type_combo.setFixedWidth(160)
         self._type_combo.setStyleSheet(
             "QComboBox {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
@@ -106,7 +106,7 @@ class ProxyWidget(QWidget):
         self._host_input.setFixedWidth(160)
         self._host_input.setStyleSheet(
             "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
@@ -129,7 +129,7 @@ class ProxyWidget(QWidget):
         self._port_input.setFixedWidth(160)
         self._port_input.setStyleSheet(
             "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
@@ -166,7 +166,7 @@ class ProxyWidget(QWidget):
         self._scope_combo.setFixedWidth(160)
         self._scope_combo.setStyleSheet(
             "QComboBox {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
@@ -192,7 +192,7 @@ class ProxyWidget(QWidget):
         self._user_input.setFixedWidth(160)
         self._user_input.setStyleSheet(
             "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
@@ -216,7 +216,7 @@ class ProxyWidget(QWidget):
         self._pass_input.setFixedWidth(160)
         self._pass_input.setStyleSheet(
             "QLineEdit {"
-            "  border: 1px solid #bdbdbd;"
+            "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
             "  padding: 2px 6px;"
             "  background: #ffffff;"
