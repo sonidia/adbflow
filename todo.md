@@ -45,12 +45,10 @@ Có thể giả lập thao tác:
 
 - mở app
 - gửi phím
-- click màn hình
 
 Ví dụ:
 
 ```bash
-adb shell input tap 500 1000
 adb shell input text hello
 adb shell input keyevent 26
 ```
@@ -99,21 +97,11 @@ adb shell screenrecord /sdcard/demo.mp4
 adb shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1
 ```
 
-# Fake thao tác chạm
-
-Tap:
-
-```bash
-adb shell input tap 500 1000
-```
-
 Swipe:
 
 ```bash
 adb shell input swipe 300 1000 300 300
 ```
-
-👉 Có thể **auto click bot**.
 
 # Gõ text từ PC vào điện thoại
 
@@ -128,12 +116,6 @@ Kết hợp:
 - `adb shell input`
 - `adb screencap`
 - script Python / bash
-
-Bạn có thể tạo:
-
-- bot game
-- auto test app
-- auto click app
 
 Ví dụ swipe:
 
@@ -408,8 +390,6 @@ ADB có thể chạy qua WiFi:
 adb tcpip 5555
 adb connect 192.168.1.10
 ```
-
-👉 Điều khiển điện thoại **không cần cắm dây**.
 
 # 🧬 15. Ghi log app riêng
 

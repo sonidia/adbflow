@@ -7,7 +7,8 @@ import time
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QGroupBox,
-    QCheckBox, QScrollArea, QFrame,
+    QCheckBox, QScrollArea, QFrame, QSpinBox,
+    QListWidget, QRadioButton, QComboBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
@@ -162,6 +163,95 @@ class _PlayStoreWorker(QThread):
                 self.progress.emit(f"❌ {serial}: {e}")
         self.finished.emit(f"{label} Play Store — {ok}/{len(self.serials)} devices")
 
+# ── Hunt-coordinate worker ────────────────────────────────────────────────────
+class _HuntCoordWorker(QThread):
+    """Listen for the next tap on the device and emit the raw touch coordinates."""
+    coord_found = Signal(int, int)
+    error = Signal(str)
+
+    def __init__(self, serial: str):
+        super().__init__()
+        self.serial = serial
+        self._proc = None
+
+    def stop(self):
+        try:
+            if self._proc:
+                self._proc.terminate()
+        except Exception:
+            pass
+
+    def run(self):
+        try:
+            self._proc = subprocess.Popen(
+                ["adb", "-s", self.serial, "shell", "getevent", "-lt"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                startupinfo=_si, text=True, bufsize=1,
+            )
+            x = y = None
+            for line in self._proc.stdout:
+                if "ABS_MT_POSITION_X" in line:
+                    try:
+                        x = int(line.strip().split()[-1], 16)
+                    except Exception:
+                        pass
+                elif "ABS_MT_POSITION_Y" in line:
+                    try:
+                        y = int(line.strip().split()[-1], 16)
+                    except Exception:
+                        pass
+                if x is not None and y is not None:
+                    self.coord_found.emit(x, y)
+                    break  # capture only one tap
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            try:
+                if self._proc:
+                    self._proc.terminate()
+            except Exception:
+                pass
+
+
+# ── Auto-click worker ─────────────────────────────────────────────────────────
+class _AutoClickWorker(QThread):
+    progress = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, serial: str, coords: list, clicks_per_coord: int,
+                 delay_ms: int, repeat: int):
+        super().__init__()
+        self.serial = serial
+        self.coords = coords          # list of (x, y) tuples
+        self.clicks_per_coord = clicks_per_coord
+        self.delay_ms = delay_ms
+        self.repeat = repeat          # 0 = infinite
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        total = 0
+        loop = 0
+        while not self._stop:
+            loop += 1
+            for (x, y) in self.coords:
+                if self._stop:
+                    break
+                for _ in range(self.clicks_per_coord):
+                    if self._stop:
+                        break
+                    _adb(self.serial, "shell", "input", "tap", str(x), str(y))
+                    total += 1
+                    self.progress.emit(f"🖱 Tapped ({x}, {y}) — total: {total}")
+                    if self.delay_ms > 0:
+                        time.sleep(self.delay_ms / 1000)
+            if self.repeat > 0 and loop >= self.repeat:
+                break
+        self.finished.emit(f"✅ Auto click done — {total} taps total")
+
+
 class ActionsWidget(QWidget):
     status_update = Signal(str)
 
@@ -169,6 +259,7 @@ class ActionsWidget(QWidget):
         super().__init__(parent)
         self._serial: str = ""
         self._workers: list[QThread] = []
+        self._auto_click_worker: _AutoClickWorker | None = None
         self._build_ui()
 
     def set_device(self, serial: str):
@@ -178,6 +269,7 @@ class ActionsWidget(QWidget):
         enabled = bool(serial)
         for btn in (self._open_url_btn, self._login_gmail_btn):
             btn.setEnabled(enabled)
+        self._start_click_btn.setEnabled(enabled and self._coord_list.count() > 0)
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -267,6 +359,192 @@ class ActionsWidget(QWidget):
 
         gmail_group.setLayout(gmail_vl)
         ivl.addWidget(gmail_group)
+
+        # ── Auto Click group ──────────────────────────────────────────────
+        click_group = QGroupBox("🖱 Auto Click")
+        click_group.setStyleSheet(_GROUP_SS)
+        click_vl = QVBoxLayout()
+        click_vl.setContentsMargins(12, 10, 12, 10)
+        click_vl.setSpacing(8)
+
+        # — Mode selection row —
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        lbl_mode = QLabel("Set coord mode:")
+        lbl_mode.setStyleSheet(_LABEL_SS)
+        mode_row.addWidget(lbl_mode)
+        self._rb_input = QRadioButton("Input")
+        self._rb_input.setStyleSheet(_CB_SS)
+        self._rb_input.setChecked(True)
+        self._rb_hunt = QRadioButton("Hunt (tap device)")
+        self._rb_hunt.setStyleSheet(_CB_SS)
+        mode_row.addWidget(self._rb_input)
+        mode_row.addWidget(self._rb_hunt)
+        mode_row.addStretch()
+        self._rb_input.toggled.connect(self._toggle_coord_mode)
+        click_vl.addLayout(mode_row)
+
+        # — Input mode row —
+        self._input_coord_row = QWidget()
+        irow = QHBoxLayout(self._input_coord_row)
+        irow.setContentsMargins(0, 0, 0, 0)
+        irow.setSpacing(6)
+        lbl_x = QLabel("X:")
+        lbl_x.setStyleSheet(_LABEL_SS)
+        irow.addWidget(lbl_x)
+        self._coord_x_input = QLineEdit()
+        self._coord_x_input.setPlaceholderText("0")
+        self._coord_x_input.setStyleSheet(_INPUT_SS)
+        self._coord_x_input.setFixedWidth(70)
+        irow.addWidget(self._coord_x_input)
+        lbl_y = QLabel("Y:")
+        lbl_y.setStyleSheet(_LABEL_SS)
+        irow.addWidget(lbl_y)
+        self._coord_y_input = QLineEdit()
+        self._coord_y_input.setPlaceholderText("0")
+        self._coord_y_input.setStyleSheet(_INPUT_SS)
+        self._coord_y_input.setFixedWidth(70)
+        irow.addWidget(self._coord_y_input)
+        self._add_coord_btn = QPushButton("＋ Add")
+        self._add_coord_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._add_coord_btn.clicked.connect(self._add_coord_from_input)
+        irow.addWidget(self._add_coord_btn)
+        irow.addStretch()
+        click_vl.addWidget(self._input_coord_row)
+
+        # — Hunt mode row —
+        self._hunt_coord_row = QWidget()
+        hrow = QHBoxLayout(self._hunt_coord_row)
+        hrow.setContentsMargins(0, 0, 0, 0)
+        hrow.setSpacing(8)
+        self._hunt_btn = QPushButton("🎯 Hunt 1 Tap")
+        self._hunt_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._hunt_btn.clicked.connect(self._start_hunt)
+        hrow.addWidget(self._hunt_btn)
+        self._hunt_status_lbl = QLabel("Press Hunt then tap on device")
+        self._hunt_status_lbl.setStyleSheet("color: #888; font-size: 10px;")
+        hrow.addWidget(self._hunt_status_lbl, 1)
+        self._hunt_coord_row.setVisible(False)
+        click_vl.addWidget(self._hunt_coord_row)
+
+        # — Coordinates list —
+        lbl_coords = QLabel("Coordinates (click order):")
+        lbl_coords.setStyleSheet(_LABEL_SS)
+        click_vl.addWidget(lbl_coords)
+        self._coord_list = QListWidget()
+        self._coord_list.setStyleSheet(
+            "QListWidget { border: 1px solid #dce3f0; border-radius: 4px;"
+            " background: #fff; font-size: 11px; }"
+            "QListWidget::item:selected { background: #bbdefb; color: #000; }"
+        )
+        self._coord_list.setFixedHeight(100)
+        click_vl.addWidget(self._coord_list)
+
+        # List management buttons
+        list_btn_row = QHBoxLayout()
+        list_btn_row.setSpacing(4)
+        self._remove_coord_btn = QPushButton("Remove")
+        self._remove_coord_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._remove_coord_btn.clicked.connect(self._remove_coord)
+        list_btn_row.addWidget(self._remove_coord_btn)
+        self._clear_coords_btn = QPushButton("Clear All")
+        self._clear_coords_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._clear_coords_btn.clicked.connect(self._clear_coords)
+        list_btn_row.addWidget(self._clear_coords_btn)
+        self._move_up_btn = QPushButton("↑ Up")
+        self._move_up_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._move_up_btn.clicked.connect(self._move_coord_up)
+        list_btn_row.addWidget(self._move_up_btn)
+        self._move_down_btn = QPushButton("↓ Down")
+        self._move_down_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._move_down_btn.clicked.connect(self._move_coord_down)
+        list_btn_row.addWidget(self._move_down_btn)
+        list_btn_row.addStretch()
+        click_vl.addLayout(list_btn_row)
+
+        # — Click settings row —
+        _sb_ss = ("QSpinBox { font-size: 11px; padding: 2px 4px;"
+                  " border: 1px solid #dce3f0; border-radius: 4px; }")
+        _cb_ss2 = ("QComboBox { font-size: 11px; padding: 2px 6px;"
+                   " border: 1px solid #dce3f0; border-radius: 4px; }")
+        cfg_row = QHBoxLayout()
+        cfg_row.setSpacing(10)
+        lbl_cpc = QLabel("Clicks/coord:")
+        lbl_cpc.setStyleSheet(_LABEL_SS)
+        cfg_row.addWidget(lbl_cpc)
+        self._clicks_per_coord = QSpinBox()
+        self._clicks_per_coord.setRange(1, 9999)
+        self._clicks_per_coord.setValue(1)
+        self._clicks_per_coord.setFixedWidth(70)
+        self._clicks_per_coord.setStyleSheet(_sb_ss)
+        self._clicks_per_coord.valueChanged.connect(self._update_completion_time)
+        cfg_row.addWidget(self._clicks_per_coord)
+        lbl_delay = QLabel("Delay (ms):")
+        lbl_delay.setStyleSheet(_LABEL_SS)
+        cfg_row.addWidget(lbl_delay)
+        self._click_delay_ms = QSpinBox()
+        self._click_delay_ms.setRange(0, 60000)
+        self._click_delay_ms.setValue(500)
+        self._click_delay_ms.setSingleStep(100)
+        self._click_delay_ms.setFixedWidth(80)
+        self._click_delay_ms.setStyleSheet(_sb_ss)
+        self._click_delay_ms.valueChanged.connect(self._update_completion_time)
+        cfg_row.addWidget(self._click_delay_ms)
+        cfg_row.addStretch()
+        click_vl.addLayout(cfg_row)
+
+        # — Completion time + Repeat mode row —
+        time_row = QHBoxLayout()
+        time_row.setSpacing(10)
+        lbl_est = QLabel("Est. time:")
+        lbl_est.setStyleSheet(_LABEL_SS)
+        time_row.addWidget(lbl_est)
+        self._completion_time_lbl = QLabel("—")
+        self._completion_time_lbl.setStyleSheet("color: #1976d2; font-size: 11px; font-weight: bold;")
+        time_row.addWidget(self._completion_time_lbl)
+        lbl_repeat = QLabel("Repeat:")
+        lbl_repeat.setStyleSheet(_LABEL_SS)
+        time_row.addWidget(lbl_repeat)
+        self._repeat_combo = QComboBox()
+        self._repeat_combo.addItems(["1× (once)", "N times", "Infinite (∞)"])
+        self._repeat_combo.setStyleSheet(_cb_ss2)
+        self._repeat_combo.currentIndexChanged.connect(self._on_repeat_changed)
+        time_row.addWidget(self._repeat_combo)
+        self._repeat_n = QSpinBox()
+        self._repeat_n.setRange(2, 9999)
+        self._repeat_n.setValue(2)
+        self._repeat_n.setFixedWidth(60)
+        self._repeat_n.setStyleSheet(_sb_ss)
+        self._repeat_n.setVisible(False)
+        self._repeat_n.valueChanged.connect(self._update_completion_time)
+        time_row.addWidget(self._repeat_n)
+        time_row.addStretch()
+        click_vl.addLayout(time_row)
+
+        # — Start / Stop buttons —
+        run_row = QHBoxLayout()
+        run_row.setSpacing(8)
+        self._start_click_btn = QPushButton("▶ Start Auto Click")
+        self._start_click_btn.setStyleSheet(_BTN_PRIMARY_SS)
+        self._start_click_btn.setEnabled(False)
+        self._start_click_btn.clicked.connect(self._start_auto_click)
+        run_row.addWidget(self._start_click_btn)
+        self._stop_click_btn = QPushButton("■ Stop")
+        self._stop_click_btn.setStyleSheet(
+            "QPushButton { background:#e53935; color:white; font-weight:bold;"
+            " padding:5px 14px; border-radius:4px; font-size:11px; }"
+            "QPushButton:hover { background:#c62828; }"
+            "QPushButton:disabled { background:#ef9a9a; }"
+        )
+        self._stop_click_btn.setEnabled(False)
+        self._stop_click_btn.clicked.connect(self._stop_auto_click)
+        run_row.addWidget(self._stop_click_btn)
+        run_row.addStretch()
+        click_vl.addLayout(run_row)
+
+        click_group.setLayout(click_vl)
+        ivl.addWidget(click_group)
+
         ivl.addStretch()
 
         scroll.setWidget(inner)
@@ -301,3 +579,147 @@ class ActionsWidget(QWidget):
         w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
         self._workers.append(w)
         w.start()
+
+    # ── Auto Click handlers ───────────────────────────────────────────────────
+    def _toggle_coord_mode(self, input_checked: bool):
+        self._input_coord_row.setVisible(input_checked)
+        self._hunt_coord_row.setVisible(not input_checked)
+
+    def _add_coord_from_input(self):
+        try:
+            x = int(self._coord_x_input.text().strip())
+            y = int(self._coord_y_input.text().strip())
+        except ValueError:
+            self.status_update.emit("⚠ Invalid coordinates. Enter integers for X and Y.")
+            return
+        n = self._coord_list.count() + 1
+        self._coord_list.addItem(f"#{n}: ({x}, {y})")
+        self._coord_x_input.clear()
+        self._coord_y_input.clear()
+        self._update_completion_time()
+        self._start_click_btn.setEnabled(bool(self._serial))
+
+    def _start_hunt(self):
+        if not self._serial:
+            return
+        self._hunt_status_lbl.setText("⏳ Waiting for tap on device...")
+        self._hunt_btn.setEnabled(False)
+        w = _HuntCoordWorker(self._serial)
+        w.coord_found.connect(self._on_hunt_coord)
+        w.error.connect(lambda e: self.status_update.emit(f"❌ Hunt error: {e}"))
+        w.finished.connect(lambda: self._hunt_btn.setEnabled(True))
+        w.finished.connect(
+            lambda: self._hunt_status_lbl.setText("Press Hunt then tap on device")
+        )
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        self._workers.append(w)
+        w.start()
+
+    def _on_hunt_coord(self, x: int, y: int):
+        n = self._coord_list.count() + 1
+        self._coord_list.addItem(f"#{n}: ({x}, {y})")
+        self._hunt_status_lbl.setText(f"✅ Captured ({x}, {y})")
+        self._update_completion_time()
+        self._start_click_btn.setEnabled(bool(self._serial))
+
+    def _remove_coord(self):
+        row = self._coord_list.currentRow()
+        if row >= 0:
+            self._coord_list.takeItem(row)
+            self._renumber_coords()
+            self._update_completion_time()
+        if self._coord_list.count() == 0:
+            self._start_click_btn.setEnabled(False)
+
+    def _clear_coords(self):
+        self._coord_list.clear()
+        self._update_completion_time()
+        self._start_click_btn.setEnabled(False)
+
+    def _move_coord_up(self):
+        row = self._coord_list.currentRow()
+        if row > 0:
+            item = self._coord_list.takeItem(row)
+            self._coord_list.insertItem(row - 1, item)
+            self._coord_list.setCurrentRow(row - 1)
+            self._renumber_coords()
+
+    def _move_coord_down(self):
+        row = self._coord_list.currentRow()
+        if 0 <= row < self._coord_list.count() - 1:
+            item = self._coord_list.takeItem(row)
+            self._coord_list.insertItem(row + 1, item)
+            self._coord_list.setCurrentRow(row + 1)
+            self._renumber_coords()
+
+    def _renumber_coords(self):
+        for i in range(self._coord_list.count()):
+            item = self._coord_list.item(i)
+            text = item.text()
+            try:
+                coords_part = text.split(": ", 1)[1]
+                item.setText(f"#{i + 1}: {coords_part}")
+            except Exception:
+                pass
+
+    def _on_repeat_changed(self, idx: int):
+        self._repeat_n.setVisible(idx == 1)
+        self._update_completion_time()
+
+    def _update_completion_time(self):
+        n_coords = self._coord_list.count()
+        clicks = self._clicks_per_coord.value()
+        delay = self._click_delay_ms.value()
+        repeat_idx = self._repeat_combo.currentIndex()
+        if repeat_idx == 2:
+            self._completion_time_lbl.setText("∞")
+            return
+        repeat = self._repeat_n.value() if repeat_idx == 1 else 1
+        total_ms = n_coords * clicks * repeat * delay
+        if total_ms == 0:
+            self._completion_time_lbl.setText("~0 ms")
+        elif total_ms < 1000:
+            self._completion_time_lbl.setText(f"~{total_ms} ms")
+        elif total_ms < 60000:
+            self._completion_time_lbl.setText(f"~{total_ms / 1000:.1f} s")
+        else:
+            self._completion_time_lbl.setText(f"~{total_ms / 60000:.1f} min")
+
+    def _start_auto_click(self):
+        if not self._serial or self._coord_list.count() == 0:
+            return
+        coords = []
+        for i in range(self._coord_list.count()):
+            text = self._coord_list.item(i).text()
+            try:
+                coords_part = text.split(": ", 1)[1].strip("()")
+                x_str, y_str = coords_part.split(",")
+                coords.append((int(x_str.strip()), int(y_str.strip())))
+            except Exception:
+                self.status_update.emit(f"⚠ Could not parse coordinate: {text}")
+                return
+        repeat_idx = self._repeat_combo.currentIndex()
+        repeat = 0 if repeat_idx == 2 else (self._repeat_n.value() if repeat_idx == 1 else 1)
+        self._start_click_btn.setEnabled(False)
+        self._stop_click_btn.setEnabled(True)
+        w = _AutoClickWorker(
+            self._serial, coords,
+            self._clicks_per_coord.value(),
+            self._click_delay_ms.value(),
+            repeat,
+        )
+        w.progress.connect(self.status_update)
+        w.finished.connect(self.status_update)
+        w.finished.connect(lambda: self._start_click_btn.setEnabled(
+            bool(self._serial) and self._coord_list.count() > 0
+        ))
+        w.finished.connect(lambda: self._stop_click_btn.setEnabled(False))
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        self._auto_click_worker = w
+        self._workers.append(w)
+        w.start()
+
+    def _stop_auto_click(self):
+        if self._auto_click_worker:
+            self._auto_click_worker.stop()
+        self._stop_click_btn.setEnabled(False)

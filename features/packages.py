@@ -264,7 +264,7 @@ class _AppActionWorker(QThread):
 
 
 # ── Main widget ───────────────────────────────────────────────────────────
-class ApplicationWidget(QWidget):
+class PackageWidget(QWidget):
     """Tab page — manage applications on the selected device."""
     status_update = Signal(str)
 

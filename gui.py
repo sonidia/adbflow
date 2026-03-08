@@ -26,7 +26,7 @@ from features.settings import SettingsWidget
 from features.proxy import ProxyWidget
 from features.info import DeviceInfoWidget
 from features.actions import ActionsWidget
-from features.apps import ApplicationWidget
+from features.packages import PackageWidget
 from features.files import FilesWidget
 
 class Worker(QThread):
@@ -200,7 +200,7 @@ class CookieLoaderGUI(QWidget):
         self.info_widget.status_update.connect(self.update_status)
         self.actions_widget = ActionsWidget()
         self.actions_widget.status_update.connect(self.update_status)
-        self.apps_widget = ApplicationWidget()
+        self.apps_widget = PackageWidget()
         self.apps_widget.status_update.connect(self.update_status)
         self.files_widget = FilesWidget()
         self.files_widget.status_update.connect(self.update_status)
@@ -288,9 +288,9 @@ class CookieLoaderGUI(QWidget):
         self.actions_button.clicked.connect(lambda: self._open_tab(4))
         left_layout.addWidget(self.actions_button)
 
-        self.apps_button = _nav_btn('📦 Apps')
-        self.apps_button.clicked.connect(lambda: self._open_tab(5))
-        left_layout.addWidget(self.apps_button)
+        self.pkgs_button = _nav_btn('📦 Packages')
+        self.pkgs_button.clicked.connect(lambda: self._open_tab(5))
+        left_layout.addWidget(self.pkgs_button)
 
         self.files_button = _nav_btn('📁 Files')
         self.files_button.clicked.connect(lambda: self._open_tab(6))
@@ -534,7 +534,7 @@ class CookieLoaderGUI(QWidget):
             self.settings_button,
             self.info_button,
             self.actions_button,
-            self.apps_button,
+            self.pkgs_button,
             self.files_button,
         ]
         self.current_active_tab = _tab_buttons[index]
