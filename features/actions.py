@@ -363,9 +363,21 @@ class ActionsWidget(QWidget):
         # ── Auto Click group ──────────────────────────────────────────────
         click_group = QGroupBox("🖱 Auto Click")
         click_group.setStyleSheet(_GROUP_SS)
-        click_vl = QVBoxLayout()
-        click_vl.setContentsMargins(12, 10, 12, 10)
-        click_vl.setSpacing(8)
+        click_hl = QHBoxLayout()  # Main horizontal layout for two columns
+        click_hl.setContentsMargins(12, 10, 12, 10)
+        click_hl.setSpacing(12)
+
+        # Left column - Controls and inputs
+        left_column = QWidget()
+        left_vl = QVBoxLayout(left_column)
+        left_vl.setContentsMargins(0, 0, 0, 0)
+        left_vl.setSpacing(8)
+
+        # Right column - Coordinate list
+        right_column = QWidget()
+        right_vl = QVBoxLayout(right_column)
+        right_vl.setContentsMargins(0, 0, 0, 0)
+        right_vl.setSpacing(8)
 
         # — Mode selection row —
         mode_row = QHBoxLayout()
@@ -382,7 +394,7 @@ class ActionsWidget(QWidget):
         mode_row.addWidget(self._rb_hunt)
         mode_row.addStretch()
         self._rb_input.toggled.connect(self._toggle_coord_mode)
-        click_vl.addLayout(mode_row)
+        left_vl.addLayout(mode_row)
 
         # — Input mode row —
         self._input_coord_row = QWidget()
@@ -394,23 +406,62 @@ class ActionsWidget(QWidget):
         irow.addWidget(lbl_x)
         self._coord_x_input = QLineEdit()
         self._coord_x_input.setPlaceholderText("0")
-        self._coord_x_input.setStyleSheet(_INPUT_SS)
-        self._coord_x_input.setFixedWidth(70)
+        self._coord_x_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #e3f2fd; border-radius: 6px;"
+            "  padding: 2px 8px; background: #ffffff; color: #1565c0;"
+            "  font-size: 12px; font-weight: bold; min-height: 20px;"
+            "  text-align: center;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2; background: #f8f9ff;"
+            "}"
+            "QLineEdit:hover {"
+            "  border: 1px solid #42a5f5;"
+            "}"
+        )
+        self._coord_x_input.setFixedWidth(80)
         irow.addWidget(self._coord_x_input)
         lbl_y = QLabel("Y:")
         lbl_y.setStyleSheet(_LABEL_SS)
         irow.addWidget(lbl_y)
         self._coord_y_input = QLineEdit()
         self._coord_y_input.setPlaceholderText("0")
-        self._coord_y_input.setStyleSheet(_INPUT_SS)
-        self._coord_y_input.setFixedWidth(70)
+        self._coord_y_input.setStyleSheet(
+            "QLineEdit {"
+            "  border: 1px solid #e3f2fd; border-radius: 6px;"
+            "  padding: 2px 8px; background: #ffffff; color: #1565c0;"
+            "  font-size: 12px; font-weight: bold; min-height: 20px;"
+            "  text-align: center;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1px solid #1976d2; background: #f8f9ff;"
+            "}"
+            "QLineEdit:hover {"
+            "  border: 1px solid #42a5f5;"
+            "}"
+        )
+        self._coord_y_input.setFixedWidth(80)
         irow.addWidget(self._coord_y_input)
         self._add_coord_btn = QPushButton("＋ Add")
-        self._add_coord_btn.setStyleSheet(_BTN_SECONDARY_SS)
+        self._add_coord_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: linear-gradient(135deg, #1976d2, #42a5f5);"
+            "  color: white; font-weight: bold; border: none;"
+            "  padding: 6px 12px; border-radius: 6px; font-size: 11px;"
+            "  min-height: 24px;"
+            "}"
+            "QPushButton:hover {"
+            "  background: linear-gradient(135deg, #1565c0, #1976d2);"
+            "}"
+            "QPushButton:pressed {"
+            "  background: linear-gradient(135deg, #0d47a1, #1565c0);"
+            "}"
+        )
         self._add_coord_btn.clicked.connect(self._add_coord_from_input)
         irow.addWidget(self._add_coord_btn)
         irow.addStretch()
-        click_vl.addWidget(self._input_coord_row)
+        left_vl.addWidget(self._input_coord_row)
 
         # — Hunt mode row —
         self._hunt_coord_row = QWidget()
@@ -425,12 +476,12 @@ class ActionsWidget(QWidget):
         self._hunt_status_lbl.setStyleSheet("color: #888; font-size: 10px;")
         hrow.addWidget(self._hunt_status_lbl, 1)
         self._hunt_coord_row.setVisible(False)
-        click_vl.addWidget(self._hunt_coord_row)
+        left_vl.addWidget(self._hunt_coord_row)
 
         # — Coordinates list —
         lbl_coords = QLabel("Coordinates (click order):")
         lbl_coords.setStyleSheet(_LABEL_SS)
-        click_vl.addWidget(lbl_coords)
+        right_vl.addWidget(lbl_coords)
         self._coord_list = QListWidget()
         self._coord_list.setStyleSheet(
             "QListWidget { border: 1px solid #dce3f0; border-radius: 4px;"
@@ -438,7 +489,7 @@ class ActionsWidget(QWidget):
             "QListWidget::item:selected { background: #bbdefb; color: #000; }"
         )
         self._coord_list.setFixedHeight(100)
-        click_vl.addWidget(self._coord_list)
+        right_vl.addWidget(self._coord_list)
 
         # List management buttons
         list_btn_row = QHBoxLayout()
@@ -460,7 +511,7 @@ class ActionsWidget(QWidget):
         self._move_down_btn.clicked.connect(self._move_coord_down)
         list_btn_row.addWidget(self._move_down_btn)
         list_btn_row.addStretch()
-        click_vl.addLayout(list_btn_row)
+        right_vl.addLayout(list_btn_row)
 
         # — Click settings row —
         _sb_ss = ("QSpinBox { font-size: 11px; padding: 2px 4px;"
@@ -491,7 +542,7 @@ class ActionsWidget(QWidget):
         self._click_delay_ms.valueChanged.connect(self._update_completion_time)
         cfg_row.addWidget(self._click_delay_ms)
         cfg_row.addStretch()
-        click_vl.addLayout(cfg_row)
+        left_vl.addLayout(cfg_row)
 
         # — Completion time + Repeat mode row —
         time_row = QHBoxLayout()
@@ -519,7 +570,7 @@ class ActionsWidget(QWidget):
         self._repeat_n.valueChanged.connect(self._update_completion_time)
         time_row.addWidget(self._repeat_n)
         time_row.addStretch()
-        click_vl.addLayout(time_row)
+        left_vl.addLayout(time_row)
 
         # — Start / Stop buttons —
         run_row = QHBoxLayout()
@@ -540,9 +591,13 @@ class ActionsWidget(QWidget):
         self._stop_click_btn.clicked.connect(self._stop_auto_click)
         run_row.addWidget(self._stop_click_btn)
         run_row.addStretch()
-        click_vl.addLayout(run_row)
+        left_vl.addLayout(run_row)
 
-        click_group.setLayout(click_vl)
+        # Add columns to main horizontal layout
+        click_hl.addWidget(left_column, 1)   # Left column takes flexible space
+        click_hl.addWidget(right_column, 1)  # Right column takes flexible space
+
+        click_group.setLayout(click_hl)
         ivl.addWidget(click_group)
 
         ivl.addStretch()

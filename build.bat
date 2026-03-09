@@ -4,7 +4,6 @@ echo   Fatan Builder
 echo ========================================
 echo.
 
-REM Check if PyInstaller is installed
 pyinstaller --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] PyInstaller is not installed.
@@ -17,17 +16,14 @@ if %errorlevel% neq 0 (
 echo [INFO] PyInstaller found. Starting build process...
 echo.
 
-REM Clean previous build
 if exist build rmdir /s /q build 2>nul
 if exist dist rmdir /s /q dist 2>nul
 
 echo [INFO] Building executable...
 echo.
 
-REM Build the executable using the spec file
 pyinstaller --clean build.spec
 
-REM Check if build was successful
 if %errorlevel% equ 0 (
     echo.
     echo ========================================

@@ -66,6 +66,13 @@ class ChromeCDP:
         self._adb("shell am force-stop com.android.chrome")
         time.sleep(2)
 
+        # Ghi flag --remote-allow-origins vào command_line để Chrome chấp nhận WebSocket CDP
+        # (Chrome 111+ từ chối kết nối nếu thiếu flag này → lỗi 403 Forbidden)
+        self._adb(
+            "shell 'echo \"chrome --remote-allow-origins=*\" "
+            "> /data/local/tmp/chrome-command-line'"
+        )
+
         # Mở Chrome, vào thẳng URL nếu có để tránh vào 2 lần
         if self._initial_url:
             self._adb(f'shell am start -a android.intent.action.VIEW -n com.android.chrome/com.google.android.apps.chrome.Main -d "{self._initial_url}"')

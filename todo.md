@@ -13,18 +13,6 @@ Ví dụ:
 - chỉnh system settings
 - thao tác file
 
-## Ghi log hệ thống (debug)
-
-```bash
-adb logcat
-```
-
-Dùng để:
-
-- debug app crash
-- xem lỗi hệ thống
-- ## theo dõi hoạt động app
-
 ## Chụp màn hình / quay màn hình
 
 - Chụp màn hình
@@ -111,54 +99,8 @@ adb shell input text hello
 
 # 🤖 2. Automation Android (bot)
 
-Kết hợp:
-
 - `adb shell input`
 - `adb screencap`
-- script Python / bash
-
-Ví dụ swipe:
-
-```bash
-adb shell input swipe 500 1500 500 500 200
-```
-
-# 📦 4. Dump toàn bộ thông tin hệ thống
-
-ADB có thể lấy **report cực chi tiết**:
-
-```bash
-adb bugreport
-```
-
-File này chứa:
-
-- log hệ thống
-- lỗi app
-- trạng thái kernel
-- network info
-
-Dev Android dùng để debug.
-
-# 🔍 5. Phân tích activity đang chạy
-
-Xem app nào đang mở:
-
-```bash
-adb shell dumpsys activity activities
-```
-
-Hoặc:
-
-```bash
-adb shell dumpsys activity top
-```
-
-Có thể biết:
-
-- activity hiện tại
-- task stack
-- process
 
 # 📊 6. Phân tích pin cực chi tiết
 
@@ -233,12 +175,6 @@ adb reverse tcp:3000 tcp:3000
 
 👉 Android truy cập server từ PC.
 
-# 🧨 15. Truy cập log kernel
-
-```bash
-adb shell dmesg
-```
-
 Xem:
 
 - lỗi driver
@@ -263,25 +199,6 @@ gỡ app rác hệ thống:
 ```bash
 adb shell pm uninstall -k --user 0 com.facebook.appmanager
 ```
-
-# 🔎 2. Xem activity của app
-
-ADB có thể biết **activity nào đang chạy**:
-
-```bash
-adb shell dumpsys window | grep mCurrentFocus
-```
-
-Kết quả ví dụ:
-
-```
-com.example.app/.MainActivity
-```
-
-👉 Rất hữu ích khi:
-
-- automation
-- reverse app
 
 # 🤖 3. Mở activity trực tiếp
 
@@ -391,14 +308,6 @@ adb tcpip 5555
 adb connect 192.168.1.10
 ```
 
-# 🧬 15. Ghi log app riêng
-
-Chỉ log app cụ thể:
-
-```bash
-adb logcat | grep com.example.app
-```
-
 # 🚀 Tool cực mạnh dùng ADB
 
 ### Mirror + control Android
@@ -455,12 +364,3 @@ Values:
 adb exec-out screencap -p > screenshot.png
 
 👉 screenshot thẳng về PC.
-
-11️⃣ Xem tiến trình đang chạy
-adb shell ps -A
-12️⃣ Kiểm tra RAM
-adb shell free -m
-13️⃣ Kiểm tra CPU usage
-adb shell top
-14️⃣ Kiểm tra dung lượng storage
-adb shell df -h
