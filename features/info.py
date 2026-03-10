@@ -496,6 +496,12 @@ class _MetricsWorker(QThread):
         self.serial = serial
         self._running = True
 
+    def stop(self):
+        self._running = False
+        self.requestInterruption()
+        self.quit()
+        self.wait(2000)
+
     def run(self):
         s = self.serial
         while self._running:
@@ -601,14 +607,20 @@ class DeviceInfoWidget(QWidget):
     def __del__(self):
         """Cleanup when widget is destroyed."""
         if self._metrics_worker and self._metrics_worker.isRunning():
-            self._metrics_worker.stop()
+            if hasattr(self._metrics_worker, 'stop'):
+                self._metrics_worker.stop()
+            else:
+                self._metrics_worker.quit()
 
     # ── public API ───────────────────────────────────────────────────────
     def set_device(self, serial: str):
         """Called when user selects a row in the table."""
         # Stop existing metrics worker when changing devices
         if self._metrics_worker and self._metrics_worker.isRunning():
-            self._metrics_worker.stop()
+            if hasattr(self._metrics_worker, 'stop'):
+                self._metrics_worker.stop()
+            else:
+                self._metrics_worker.quit()
 
         self._serial = serial
         label = f"Serial: {serial}" if serial else "No device selected"
@@ -1283,7 +1295,10 @@ class DeviceInfoWidget(QWidget):
             return
         # Stop existing worker if running
         if self._metrics_worker and self._metrics_worker.isRunning():
-            self._metrics_worker.stop()
+            if hasattr(self._metrics_worker, 'stop'):
+                self._metrics_worker.stop()
+            else:
+                self._metrics_worker.quit()
         # Start new worker
         w = self._MetricsWorker(self._serial)
         w.cpu_ready.connect(self._on_metrics_cpu)
@@ -1319,7 +1334,10 @@ class DeviceInfoWidget(QWidget):
             self._auto_timer.stop()
             # Stop the metrics worker when disabling auto-refresh
             if self._metrics_worker and self._metrics_worker.isRunning():
-                self._metrics_worker.stop()
+                if hasattr(self._metrics_worker, 'stop'):
+                    self._metrics_worker.stop()
+                else:
+                    self._metrics_worker.quit()
             self._metrics_auto_btn.setText("▶ Start Auto-Refresh")
             self._metrics_auto_btn.setStyleSheet(
                 "QPushButton { background-color: #388e3c; color: white; font-weight: bold;"

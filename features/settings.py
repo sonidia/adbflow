@@ -11,7 +11,7 @@ import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QGroupBox, QSpacerItem, QSizePolicy,
-    QComboBox, QSlider, QCheckBox, QScrollArea, QFrame,
+    QComboBox, QSlider, QCheckBox, QScrollArea, QFrame, QGridLayout,
 )
 from PySide6.QtCore import Signal, Qt, QThread, QTimer
 
@@ -135,6 +135,18 @@ class _DeviceControlWorker(QThread):
                 elif self.action == "reset_resolution":
                     _shell(s, "wm size reset")
                     results.append(f"✅ Resolution reset on {s}")
+                elif self.action == "show_touches_on":
+                    _shell(s, "settings put system show_touches 1")
+                    results.append(f"✅ Show Touches ON on {s}")
+                elif self.action == "show_touches_off":
+                    _shell(s, "settings put system show_touches 0")
+                    results.append(f"✅ Show Touches OFF on {s}")
+                elif self.action == "pointer_location_on":
+                    _shell(s, "settings put system pointer_location 1")
+                    results.append(f"✅ Pointer Location ON on {s}")
+                elif self.action == "pointer_location_off":
+                    _shell(s, "settings put system pointer_location 0")
+                    results.append(f"✅ Pointer Location OFF on {s}")
             except Exception as e:
                 results.append(f"❌ {s}: {e}")
         self.finished.emit("\n".join(results) if results else "Done")
@@ -145,6 +157,7 @@ class SettingsWidget(QWidget):
     settings_saved = Signal(dict)        # emitted after user saves
     setup_keyboard_requested = Signal()  # emit to trigger keyboard setup on all devices
     install_chrome_requested = Signal()  # emit to trigger Chrome install on all devices
+    install_gmail_requested = Signal()    # emit to trigger Gmail install on all devices
     install_socksdroid_requested = Signal()  # emit to trigger SocksDroid install on all devices
 
     DEFAULTS = {
@@ -279,7 +292,7 @@ class SettingsWidget(QWidget):
         sep_bt.setStyleSheet("color: #ccc; margin-left: 10px")
         row_wh.addWidget(sep_bt)
 
-        lbl_stay = QLabel("� Stay on charging:")
+        lbl_stay = QLabel("🔋 Stay on charging:")
         lbl_stay.setStyleSheet(_LABEL_SS)
         lbl_stay.setFixedWidth(120)
         row_wh.addWidget(lbl_stay)
@@ -295,6 +308,30 @@ class SettingsWidget(QWidget):
         btn_stay_off.setToolTip("adb shell settings put global stay_on_while_plugged_in 0")
         btn_stay_off.clicked.connect(lambda: self._device_action("stay_on_charging_off"))
         row_wh.addWidget(btn_stay_off)
+
+        sep1 = QLabel("|")
+        sep1.setStyleSheet("color: #ccc; margin-left: 10px")
+        row_wh.addWidget(sep1)
+
+        lbl_pointer = QLabel("🖱 Pointer Location:")
+        lbl_pointer.setStyleSheet(_LABEL_SS)
+        lbl_pointer.setFixedWidth(120)
+        row_wh.addWidget(lbl_pointer)
+        btn_pointer_on = QPushButton("ON")
+        btn_pointer_on.setStyleSheet(_BTN_ON_SS)
+        btn_pointer_on.setFixedHeight(26)
+        btn_pointer_on.setToolTip(
+            "Hiển thị overlay: tọa độ X/Y, đường di chuyển, velocity, trạng thái touch event\n"
+            "adb shell settings put system pointer_location 1"
+        )
+        btn_pointer_on.clicked.connect(lambda: self._device_action("pointer_location_on"))
+        row_wh.addWidget(btn_pointer_on)
+        btn_pointer_off = QPushButton("OFF")
+        btn_pointer_off.setStyleSheet(_BTN_OFF_SS)
+        btn_pointer_off.setFixedHeight(26)
+        btn_pointer_off.setToolTip("adb shell settings put system pointer_location 0")
+        btn_pointer_off.clicked.connect(lambda: self._device_action("pointer_location_off"))
+        row_wh.addWidget(btn_pointer_off)
 
         row_wh.addStretch()
         ctrl_vl.addLayout(row_wh)
@@ -468,7 +505,7 @@ class SettingsWidget(QWidget):
         sep5.setStyleSheet("color: #ccc; margin-left: 8px")
         row_anim.addWidget(sep5)
 
-        lbl_bt = QLabel("� Bluetooth:")
+        lbl_bt = QLabel("🛜 Bluetooth:")
         lbl_bt.setStyleSheet(_LABEL_SS)
         lbl_bt.setFixedWidth(80)
         row_anim.addWidget(lbl_bt)
@@ -616,8 +653,8 @@ class SettingsWidget(QWidget):
         setup_vl.setContentsMargins(12, 10, 12, 10)
         setup_vl.setSpacing(8)
 
-        setup_btn_row1 = QHBoxLayout()
-        setup_btn_row1.setSpacing(10)
+        # Use a flow-wrap container: buttons inside a QWidget with QGridLayout (3 per row)
+        _action_btns = []
 
         self._disable_play_btn = QPushButton("🚫 Disable Play Store")
         self._disable_play_btn.setStyleSheet(_BTN_SS)
@@ -627,7 +664,7 @@ class SettingsWidget(QWidget):
             "adb shell pm disable-user --user 0 com.android.vending"
         )
         self._disable_play_btn.clicked.connect(lambda: self._run_play_store(enable=False))
-        setup_btn_row1.addWidget(self._disable_play_btn, 1)
+        _action_btns.append(self._disable_play_btn)
 
         self._enable_play_btn = QPushButton("✅ Enable Play Store")
         self._enable_play_btn.setStyleSheet(_BTN_SS)
@@ -637,37 +674,57 @@ class SettingsWidget(QWidget):
             "adb shell pm enable com.android.vending"
         )
         self._enable_play_btn.clicked.connect(lambda: self._run_play_store(enable=True))
-        setup_btn_row1.addWidget(self._enable_play_btn, 1)
+        _action_btns.append(self._enable_play_btn)
 
         self._setup_keyboard_btn = QPushButton("⌨️ Setup Keyboard")
         self._setup_keyboard_btn.setStyleSheet(_BTN_SS)
         self._setup_keyboard_btn.setMinimumHeight(30)
         self._setup_keyboard_btn.setToolTip("Install ADB keyboard on all devices in the table")
         self._setup_keyboard_btn.clicked.connect(self.setup_keyboard_requested.emit)
-        setup_btn_row1.addWidget(self._setup_keyboard_btn, 1)
+        _action_btns.append(self._setup_keyboard_btn)
 
         self._reboot_btn = QPushButton("🔁 Reboot Device")
         self._reboot_btn.setStyleSheet(_BTN_SS)
         self._reboot_btn.setMinimumHeight(30)
         self._reboot_btn.setToolTip("Reboot all devices in the table  (adb reboot)")
         self._reboot_btn.clicked.connect(lambda: self._device_action("reboot"))
-        setup_btn_row1.addWidget(self._reboot_btn, 1)
+        _action_btns.append(self._reboot_btn)
 
         self._install_chrome_btn = QPushButton("🌐 Install Chrome")
         self._install_chrome_btn.setStyleSheet(_BTN_SS)
         self._install_chrome_btn.setMinimumHeight(30)
         self._install_chrome_btn.setToolTip("Install Chrome on all devices in the table")
         self._install_chrome_btn.clicked.connect(self.install_chrome_requested.emit)
-        setup_btn_row1.addWidget(self._install_chrome_btn, 1)
+        _action_btns.append(self._install_chrome_btn)
+
+        self._install_gmail_btn = QPushButton("📧 Install Gmail")
+        self._install_gmail_btn.setStyleSheet(_BTN_SS)
+        self._install_gmail_btn.setMinimumHeight(30)
+        self._install_gmail_btn.setToolTip("Install Gmail from /data/apps/gmail.apkm on all devices")
+        self._install_gmail_btn.clicked.connect(self.install_gmail_requested.emit)
+        _action_btns.append(self._install_gmail_btn)
 
         self._install_socksdroid_btn = QPushButton("🧦 Install SocksDroid")
         self._install_socksdroid_btn.setStyleSheet(_BTN_SS)
         self._install_socksdroid_btn.setMinimumHeight(30)
         self._install_socksdroid_btn.setToolTip("Install SocksDroid from /data/apps/SocksDroid.apk on all devices")
         self._install_socksdroid_btn.clicked.connect(self.install_socksdroid_requested.emit)
-        setup_btn_row1.addWidget(self._install_socksdroid_btn, 1)
+        _action_btns.append(self._install_socksdroid_btn)
 
-        setup_vl.addLayout(setup_btn_row1)
+        # Lay out buttons in rows of 3, stretching evenly
+        _COLS = 3
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        for _i, _btn in enumerate(_action_btns):
+            grid.addWidget(_btn, _i // _COLS, _i % _COLS)
+        # Fill remaining cells in last row with stretch spacers
+        _last_row_items = len(_action_btns) % _COLS
+        if _last_row_items:
+            for _col in range(_last_row_items, _COLS):
+                grid.setColumnStretch(_col, 1)
+        for _col in range(_COLS):
+            grid.setColumnStretch(_col, 1)
+        setup_vl.addLayout(grid)
 
         setup_group.setLayout(setup_vl)
         vl.addWidget(setup_group)

@@ -897,6 +897,7 @@ class AdsTableWidget(QWidget):
                 open_btn.setFixedSize(64, 24)
                 close_btn = QPushButton("Close")
                 close_btn.setFixedSize(48, 24)
+                close_btn.setVisible(False)  # hidden until preview is open
 
                 # Connect buttons — use partial to capture serial
                 open_btn.clicked.connect(partial(self._on_preview_clicked, serial))
@@ -1019,21 +1020,25 @@ class AdsTableWidget(QWidget):
 
     def set_preview_active(self, serial: str, active: bool):
         """Enable or disable the Preview button for the row matching `serial`.
-        When active=True the Preview button is disabled (greyed out).
+        When active=True the Preview button is disabled (greyed out) and the
+        Close button becomes visible. When active=False the Preview button is
+        re-enabled and the Close button is hidden.
         """
         for row in range(self.table.rowCount()):
             serial_item = self.table.item(row, 2)
             if serial_item and serial_item.text().strip() == serial:
                 cell_w = self.table.cellWidget(row, 6)
                 if cell_w:
-                    # The first child button is Preview
                     btns = cell_w.findChildren(QPushButton)
-                    if btns:
+                    if len(btns) >= 1:
+                        # btns[0] = Open (Preview), btns[1] = Close
                         btns[0].setEnabled(not active)
                         btns[0].setStyleSheet(
                             "QPushButton { background: #bbb; color: #777; border-radius:3px; font-size:11px; }"
                             if active else ""
                         )
+                    if len(btns) >= 2:
+                        btns[1].setVisible(active)
                 break
 
     def update_proxy_statuses(self, proxy_data: dict):

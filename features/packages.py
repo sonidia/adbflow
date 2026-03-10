@@ -157,8 +157,8 @@ class _AppActionWorker(QThread):
             ext = os.path.splitext(apk)[1].lower()
             self.progress.emit(f"📦 Installing {os.path.basename(apk)}…")
 
-            if ext == ".xapk":
-                # XAPK is a ZIP containing split APKs
+            if ext == ".xapk" or ext == ".apkm":
+                # XAPK / APKM are ZIP archives containing split APKs
                 tmp_dir = tempfile.mkdtemp(prefix="xapk_")
                 try:
                     with zipfile.ZipFile(apk, "r") as z:
@@ -588,7 +588,7 @@ class PackageWidget(QWidget):
     def _browse_apk(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select APK file", "",
-            "APK files (*.apk *.apks *.xapk);;All files (*)"
+            "APK files (*.apk *.apks *.xapk *.apkm);;All files (*)"
         )
         if path:
             self._apk_path_input.setText(path)

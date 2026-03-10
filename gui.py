@@ -20,7 +20,7 @@ _si = subprocess.STARTUPINFO()
 _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 from helpers.csv import CSVHelper
 from utils.adb import setup_adb_keyboard
-from features.chrome import install_chrome, install_socksdroid, open_url_in_chrome
+from features.chrome import install_chrome, install_gmail, install_socksdroid, open_url_in_chrome
 from features.ads import run_ads_automation
 from features.ads import AdsTableWidget
 from features.settings import SettingsWidget
@@ -53,6 +53,8 @@ class Worker(QThread):
                 self.setup_keyboard_for_all()
             elif self.task_type == "install_chrome":
                 self.install_chrome_for_all()
+            elif self.task_type == "install_gmail":
+                self.install_gmail_for_all()
             elif self.task_type == "install_socksdroid":
                 self.install_socksdroid_for_all()
             elif self.task_type == "run_ads":
@@ -123,15 +125,36 @@ class Worker(QThread):
 
         self.finished.emit(f'Successfully installed SocksDroid for {successful_devices} out of {row_count} devices')
 
+    def install_gmail_for_all(self):
+        row_count = len(self.table_data)
+        if row_count == 0:
+            self.finished.emit('No devices found in table')
+            return
+
+        successful_devices = 0
+        for row in range(row_count):
+            serial = self.table_data[row].get('serial', '')
+
+            if serial:
+                try:
+                    self.progress.emit(f'Installing Gmail for: {serial}')
+                    install_gmail(serial)
+                    successful_devices += 1
+                    self.progress.emit(f'✅ Installed Gmail for device: {serial}')
+                except Exception as e:
+                    self.progress.emit(f'❌ Error installing Gmail for device {serial}: {str(e)}')
+
+        self.finished.emit(f'Successfully installed Gmail for {successful_devices} out of {row_count} devices')
+
     def run_ads_for_all(self):
         row_count = len(self.table_data)
         if row_count == 0:
             self.finished.emit('No devices found in table')
             return
 
-        ads_link = self.settings.get("ads_link", "")
-        if not ads_link:
-            self.finished.emit('⚠️ No Ads Link provided')
+        ads_links = self.settings.get("ads_links", {})
+        if not ads_links:
+            self.finished.emit('⚠️ No Ads Links provided')
             return
 
         repeat_count = max(1, self.settings.get("repeat_count", 1))
@@ -160,6 +183,11 @@ class Worker(QThread):
                 if not serial:
                     continue
 
+                ads_link = ads_links.get(serial, "")
+                if not ads_link:
+                    self.progress.emit(f'⚠️ No ads link for device {serial}, skipping')
+                    continue
+
                 # Resolve human settings: fixed or freshly randomized per device
                 if self._human_settings_fn is not None:
                     human = self._human_settings_fn()
@@ -172,7 +200,7 @@ class Worker(QThread):
                     human = self.settings.get("human", {})
 
                 try:
-                    self.progress.emit(f'🤖 Running ads automation on: {serial}')
+                    self.progress.emit(f'🤖 Running ads automation on: {serial} → {ads_link}')
                     result = run_ads_automation(serial, ads_link, human_settings=human)
                     title = result.get('title', '') if isinstance(result, dict) else str(result)
                     domain = result.get('domain', '') if isinstance(result, dict) else ''
@@ -278,6 +306,7 @@ class CookieLoaderGUI(QWidget):
         )
         self.settings_widget.setup_keyboard_requested.connect(self.setup_keyboard_for_all)
         self.settings_widget.install_chrome_requested.connect(self.install_chrome_for_all)
+        self.settings_widget.install_gmail_requested.connect(self.install_gmail_for_all)
         self.settings_widget.install_socksdroid_requested.connect(self.install_socksdroid_for_all)
         self.settings_widget._get_serials_fn = self._collect_serials
 
@@ -437,30 +466,42 @@ class CookieLoaderGUI(QWidget):
 
         # Ads Link input row
         ads_link_row = QHBoxLayout()
-        ads_link_label = QLabel("🔗 Ads Link:")
+        ads_link_label = QLabel("🔗 Ads Links:")
         ads_link_label.setStyleSheet("font-weight: bold;")
+        ads_link_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         ads_link_row.addWidget(ads_link_label)
-        self.ads_link_input = QLineEdit()
-        self.ads_link_input.setPlaceholderText("Paste ads URL here…")
+        self.ads_link_input = QTextEdit()
+        self.ads_link_input.setPlaceholderText("Paste one ads URL per line…")
+        self.ads_link_input.setFixedHeight(72)
         # Apply consistent input styling
         self.ads_link_input.setStyleSheet(
-            "QLineEdit {"
+            "QTextEdit {"
             "  border: 1px solid #ddd;"
             "  border-radius: 4px;"
-            "  padding: 2px 6px;"
+            "  padding: 4px 6px;"
             "  background: #ffffff;"
             "  color: #212121;"
             "  font-size: 11px;"
-            "  height: 22px;"
             "}"
-            "QLineEdit:focus {"
+            "QTextEdit:focus {"
             "  border: 1px solid #1976d2;"
             "}"
         )
+        # Load saved ads links
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, "r") as _f:
+                    _saved = json.load(_f)
+                    _links = _saved.get("ads_links", "")
+                    if _links:
+                        self.ads_link_input.setPlainText(_links)
+        except Exception:
+            pass
+        self.ads_link_input.textChanged.connect(self._save_ads_links)
         ads_link_row.addWidget(self.ads_link_input)
         self.ads_link_copy_btn = QPushButton("📋")
         self.ads_link_copy_btn.setFixedSize(32, 32)
-        self.ads_link_copy_btn.setToolTip("Copy ads link to clipboard")
+        self.ads_link_copy_btn.setToolTip("Copy ads links to clipboard")
         self.ads_link_copy_btn.clicked.connect(self._copy_ads_link)
         ads_link_row.addWidget(self.ads_link_copy_btn)
         simulator_layout.addLayout(ads_link_row)
@@ -525,7 +566,7 @@ class CookieLoaderGUI(QWidget):
 
         self.view_log_button = QPushButton("📋 View Log")
         self.view_log_button.setCheckable(True)
-        self.view_log_button.setChecked(False)
+        self.view_log_button.setChecked(True)
         self.view_log_button.setToolTip("Toggle log panel visibility")
         self.view_log_button.setStyleSheet(
             "QPushButton { background-color: #455a64; color: white; font-weight: bold;"
@@ -595,7 +636,7 @@ class CookieLoaderGUI(QWidget):
         log_vl.addLayout(clear_log_row)
 
         log_group.setLayout(log_vl)
-        log_group.hide()  # hidden by default; toggled by View Log button
+        log_group.show()  # visible by default; toggled by View Log button
         self.view_log_button.toggled.connect(log_group.setVisible)
         simulator_layout.addWidget(log_group)
 
@@ -694,8 +735,8 @@ class CookieLoaderGUI(QWidget):
         self.settings_button.setEnabled(True)
 
     def _copy_ads_link(self):
-        """Copy the ads link input text to clipboard with visual feedback."""
-        text = self.ads_link_input.text().strip()
+        """Copy the ads link textarea text to clipboard with visual feedback."""
+        text = self.ads_link_input.toPlainText().strip()
         if text:
             QApplication.clipboard().setText(text)
             self.ads_link_copy_btn.setText("✅")
@@ -703,6 +744,19 @@ class CookieLoaderGUI(QWidget):
         else:
             self.ads_link_copy_btn.setText("❌")
             QTimer.singleShot(800, lambda: self.ads_link_copy_btn.setText("📋"))
+
+    def _save_ads_links(self):
+        """Persist the ads links textarea value to settings.json."""
+        try:
+            data = {}
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, "r") as f:
+                    data = json.load(f)
+            data["ads_links"] = self.ads_link_input.toPlainText()
+            with open(self.settings_file, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
 
     def _append_log(self, message: str):
         """Append a log message to the ads log panel."""
@@ -836,6 +890,20 @@ class CookieLoaderGUI(QWidget):
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.start()
 
+    def install_gmail_for_all(self):
+        if self.worker and self.worker.isRunning():
+            self.update_status('Task already running')
+            return
+
+        table_data = self.ads_table.get_table_data()
+
+        self.disable_buttons()
+
+        self.worker = Worker("install_gmail", table_data)
+        self.worker.progress.connect(self.update_status)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.start()
+
     def install_socksdroid_for_all(self):
         if self.worker and self.worker.isRunning():
             self.update_status('Task already running')
@@ -855,12 +923,19 @@ class CookieLoaderGUI(QWidget):
             self.update_status('Task already running')
             return
 
-        ads_link = self.ads_link_input.text().strip()
-        if not ads_link:
-            self.update_status('⚠️ Please enter an Ads Link in the Simulator tab')
+        raw_links = self.ads_link_input.toPlainText()
+        ads_links = [ln.strip() for ln in raw_links.splitlines() if ln.strip()]
+        if not ads_links:
+            self.update_status('⚠️ Please enter at least one Ads Link in the Simulator tab')
             return
 
-        table_data = self.ads_table.get_table_data()
+        all_table_data = self.ads_table.get_table_data()
+        # Limit devices to number of links
+        table_data = all_table_data[:len(ads_links)]
+        if not table_data:
+            self.update_status('⚠️ No devices found in table')
+            return
+
         human_settings = self.ads_table.get_human_settings()
         behavior_mode = self.behavior_mode_combo.currentText()
 
@@ -869,16 +944,18 @@ class CookieLoaderGUI(QWidget):
         # Auto-open the log panel when a run starts
         self.view_log_button.setChecked(True)
 
-        worker_settings = {"ads_link": ads_link}
+        # Build per-device (serial → ads_link) mapping
+        per_device_links = {row['serial']: ads_links[i] for i, row in enumerate(table_data) if row['serial']}
+
+        worker_settings = {"ads_links": per_device_links}
         repeat = getattr(self, "_repeat_count", 1)
         worker_settings["repeat_count"] = repeat
         if behavior_mode == "Same in series":
             worker_settings["human"] = human_settings
-            self._append_log(f"▶ Starting run — behavior mode: Same in series | iterations: {repeat}×")
+            self._append_log(f"▶ Starting run — behavior mode: Same in series | iterations: {repeat}× | links: {len(ads_links)}")
         else:
-            # Pass a callable so the worker can generate fresh random settings per device
             worker_settings["human_settings_fn"] = self.ads_table.get_randomized_human_settings
-            self._append_log(f"▶ Starting run — behavior mode: Randomly different | iterations: {repeat}×")
+            self._append_log(f"▶ Starting run — behavior mode: Randomly different | iterations: {repeat}× | links: {len(ads_links)}")
 
         self.worker = Worker("run_ads", table_data, settings=worker_settings)
         self.worker.progress.connect(self.update_status)
