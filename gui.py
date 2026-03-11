@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QLabel, QLineEdit, QTextEdit, QGroupBox, QComboBox,
     QSpinBox, QDialog, QDialogButtonBox, QFormLayout,
 )
-from PySide6.QtCore import QTimer, QThread, Signal, Qt, QPoint
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QPoint, QEvent
 from PySide6.QtGui import QIcon, QCloseEvent, QCursor
 
 _ANDROID_TOOLS_PATHS = [
@@ -25,7 +25,7 @@ from features.ads import run_ads_automation
 from features.ads import AdsTableWidget
 from features.settings import SettingsWidget
 from features.proxy import ProxyWidget
-from features.info import DeviceInfoWidget
+from features.dashboard import DashboardWidget
 from features.actions import ActionsWidget
 from features.packages import PackageWidget
 from features.files import FilesWidget
@@ -305,17 +305,13 @@ class CookieLoaderGUI(QWidget):
         self.settings_widget.settings_saved.connect(
             lambda _: self.update_status("✅ Settings saved")
         )
-        self.settings_widget.setup_keyboard_requested.connect(self.setup_keyboard_for_all)
-        self.settings_widget.install_chrome_requested.connect(self.install_chrome_for_all)
-        self.settings_widget.install_gmail_requested.connect(self.install_gmail_for_all)
-        self.settings_widget.install_socksdroid_requested.connect(self.install_socksdroid_for_all)
         self.settings_widget._get_serials_fn = self._collect_serials
 
         self.proxy_widget = ProxyWidget()
         self.proxy_widget.status_update.connect(self.update_status)
         self.proxy_widget.proxy_status_updated.connect(self.ads_table.update_proxy_statuses)
 
-        self.info_widget = DeviceInfoWidget()
+        self.info_widget = DashboardWidget()
         self.info_widget.status_update.connect(self.update_status)
         self.actions_widget = ActionsWidget()
         self.actions_widget.status_update.connect(self.update_status)
@@ -331,6 +327,11 @@ class CookieLoaderGUI(QWidget):
 
         self.toolbox_widget = ToolboxWidget()
         self.toolbox_widget.status_update.connect(self.update_status)
+        self.toolbox_widget.setup_keyboard_requested.connect(self.setup_keyboard_for_all)
+        self.toolbox_widget.install_chrome_requested.connect(self.install_chrome_for_all)
+        self.toolbox_widget.install_gmail_requested.connect(self.install_gmail_for_all)
+        self.toolbox_widget.install_socksdroid_requested.connect(self.install_socksdroid_for_all)
+        self.toolbox_widget._get_serials_fn = self._collect_serials
 
         # Preview panel (hidden by default)
         self.preview_panel = QWidget()
@@ -424,9 +425,9 @@ class CookieLoaderGUI(QWidget):
 
         left_layout.addStretch()
 
-        self.info_button = _nav_btn('ℹ️ Info')
-        self.info_button.clicked.connect(lambda: self._open_tab(3))
-        left_layout.addWidget(self.info_button)
+        self.dashboard_button = _nav_btn('ℹ️ Dashboard')
+        self.dashboard_button.clicked.connect(lambda: self._open_tab(3))
+        left_layout.addWidget(self.dashboard_button)
 
         self.actions_button = _nav_btn('⚡ Actions')
         self.actions_button.clicked.connect(lambda: self._open_tab(4))
@@ -486,10 +487,6 @@ class CookieLoaderGUI(QWidget):
 
         # Ads Link input row
         ads_link_row = QHBoxLayout()
-        ads_link_label = QLabel("🔗 Ads Links:")
-        ads_link_label.setStyleSheet("font-weight: bold;")
-        ads_link_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        ads_link_row.addWidget(ads_link_label)
         self.ads_link_input = QTextEdit()
         self.ads_link_input.setPlaceholderText("Paste one ads URL per line…")
         self.ads_link_input.setFixedHeight(72)
@@ -523,7 +520,18 @@ class CookieLoaderGUI(QWidget):
         self.ads_link_copy_btn.setFixedSize(32, 32)
         self.ads_link_copy_btn.setToolTip("Copy ads links to clipboard")
         self.ads_link_copy_btn.clicked.connect(self._copy_ads_link)
-        ads_link_row.addWidget(self.ads_link_copy_btn)
+        ads_link_clear_btn = QPushButton("🗑")
+        ads_link_clear_btn.setFixedSize(32, 32)
+        ads_link_clear_btn.setToolTip("Clear ads links")
+        ads_link_clear_btn.clicked.connect(self.ads_link_input.clear)
+        from PySide6.QtWidgets import QVBoxLayout as _QVBoxLayout
+        _right_btn_vl = _QVBoxLayout()
+        _right_btn_vl.setSpacing(2)
+        _right_btn_vl.setContentsMargins(0, 0, 0, 0)
+        _right_btn_vl.addWidget(self.ads_link_copy_btn)
+        _right_btn_vl.addWidget(ads_link_clear_btn)
+        _right_btn_vl.addStretch()
+        ads_link_row.addLayout(_right_btn_vl)
         simulator_layout.addLayout(ads_link_row)
 
         # Like Human Behavior group
@@ -725,7 +733,7 @@ class CookieLoaderGUI(QWidget):
             self.simulator_button,
             self.proxy_button,
             self.settings_button,
-            self.info_button,
+            self.dashboard_button,
             self.actions_button,
             self.pkgs_button,
             self.files_button,
@@ -1135,8 +1143,7 @@ class CookieLoaderGUI(QWidget):
             proc = subprocess.Popen(
                 [scrcpy_exe, "-s", serial, "--window-title", serial,
                  "--window-width", str(self.preview_width),
-                 "--window-height", str(self.preview_height),
-                 "--always-on-top"],
+                 "--window-height", str(self.preview_height)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -1310,6 +1317,19 @@ class CookieLoaderGUI(QWidget):
     def _on_preview_click_for_hunt(self, dev_x: int, dev_y: int):
         """Forward a preview-window click as a hunt coordinate to the actions widget."""
         self.actions_widget.receive_preview_click(dev_x, dev_y)
+
+    def changeEvent(self, event):
+        """Sync scrcpy window visibility with app minimize/restore state."""
+        if event.type() == QEvent.Type.WindowStateChange and self._embed_hwnd and os.name == 'nt':
+            user32 = ctypes.windll.user32
+            SW_HIDE    = 0
+            SW_SHOW    = 5
+            if self.isMinimized():
+                user32.ShowWindow(self._embed_hwnd, SW_HIDE)
+            else:
+                user32.ShowWindow(self._embed_hwnd, SW_SHOW)
+                self._reposition_scrcpy()
+        super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
         """Ensure scrcpy preview is closed when the app is closing."""

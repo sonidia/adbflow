@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt, QThread, QTimer
 
-from features.actions import _PlayStoreWorker
-
 _si = subprocess.STARTUPINFO()
 _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
@@ -155,10 +153,6 @@ class SettingsWidget(QWidget):
     """Settings form rendered as an inline tab content (no modal)."""
 
     settings_saved = Signal(dict)        # emitted after user saves
-    setup_keyboard_requested = Signal()  # emit to trigger keyboard setup on all devices
-    install_chrome_requested = Signal()  # emit to trigger Chrome install on all devices
-    install_gmail_requested = Signal()    # emit to trigger Gmail install on all devices
-    install_socksdroid_requested = Signal()  # emit to trigger SocksDroid install on all devices
 
     DEFAULTS = {
         "preview_width": 300,
@@ -646,89 +640,6 @@ class SettingsWidget(QWidget):
         display_group.setLayout(display_vl)
         vl.addWidget(display_group)
 
-        # ── Device Actions ─────────────────────────────────────────────────
-        setup_group = QGroupBox("🛠 Device Actions")
-        setup_group.setStyleSheet(_GROUP_BLUE_SS)
-        setup_vl = QVBoxLayout()
-        setup_vl.setContentsMargins(12, 10, 12, 10)
-        setup_vl.setSpacing(8)
-
-        # Use a flow-wrap container: buttons inside a QWidget with QGridLayout (3 per row)
-        _action_btns = []
-
-        self._disable_play_btn = QPushButton("🚫 Disable Play Store")
-        self._disable_play_btn.setStyleSheet(_BTN_SS)
-        self._disable_play_btn.setMinimumHeight(30)
-        self._disable_play_btn.setToolTip(
-            "Disable Google Play Store on all devices\n"
-            "adb shell pm disable-user --user 0 com.android.vending"
-        )
-        self._disable_play_btn.clicked.connect(lambda: self._run_play_store(enable=False))
-        _action_btns.append(self._disable_play_btn)
-
-        self._enable_play_btn = QPushButton("✅ Enable Play Store")
-        self._enable_play_btn.setStyleSheet(_BTN_SS)
-        self._enable_play_btn.setMinimumHeight(30)
-        self._enable_play_btn.setToolTip(
-            "Enable Google Play Store on all devices\n"
-            "adb shell pm enable com.android.vending"
-        )
-        self._enable_play_btn.clicked.connect(lambda: self._run_play_store(enable=True))
-        _action_btns.append(self._enable_play_btn)
-
-        self._setup_keyboard_btn = QPushButton("⌨️ Setup Keyboard")
-        self._setup_keyboard_btn.setStyleSheet(_BTN_SS)
-        self._setup_keyboard_btn.setMinimumHeight(30)
-        self._setup_keyboard_btn.setToolTip("Install ADB keyboard on all devices in the table")
-        self._setup_keyboard_btn.clicked.connect(self.setup_keyboard_requested.emit)
-        _action_btns.append(self._setup_keyboard_btn)
-
-        self._reboot_btn = QPushButton("🔁 Reboot Device")
-        self._reboot_btn.setStyleSheet(_BTN_SS)
-        self._reboot_btn.setMinimumHeight(30)
-        self._reboot_btn.setToolTip("Reboot all devices in the table  (adb reboot)")
-        self._reboot_btn.clicked.connect(lambda: self._device_action("reboot"))
-        _action_btns.append(self._reboot_btn)
-
-        self._install_chrome_btn = QPushButton("🌐 Install Chrome")
-        self._install_chrome_btn.setStyleSheet(_BTN_SS)
-        self._install_chrome_btn.setMinimumHeight(30)
-        self._install_chrome_btn.setToolTip("Install Chrome on all devices in the table")
-        self._install_chrome_btn.clicked.connect(self.install_chrome_requested.emit)
-        _action_btns.append(self._install_chrome_btn)
-
-        self._install_gmail_btn = QPushButton("📧 Install Gmail")
-        self._install_gmail_btn.setStyleSheet(_BTN_SS)
-        self._install_gmail_btn.setMinimumHeight(30)
-        self._install_gmail_btn.setToolTip("Install Gmail from /data/apps/gmail.apkm on all devices")
-        self._install_gmail_btn.clicked.connect(self.install_gmail_requested.emit)
-        _action_btns.append(self._install_gmail_btn)
-
-        self._install_socksdroid_btn = QPushButton("🧦 Install SocksDroid")
-        self._install_socksdroid_btn.setStyleSheet(_BTN_SS)
-        self._install_socksdroid_btn.setMinimumHeight(30)
-        self._install_socksdroid_btn.setToolTip("Install SocksDroid from /data/apps/SocksDroid.apk on all devices")
-        self._install_socksdroid_btn.clicked.connect(self.install_socksdroid_requested.emit)
-        _action_btns.append(self._install_socksdroid_btn)
-
-        # Lay out buttons in rows of 3, stretching evenly
-        _COLS = 3
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        for _i, _btn in enumerate(_action_btns):
-            grid.addWidget(_btn, _i // _COLS, _i % _COLS)
-        # Fill remaining cells in last row with stretch spacers
-        _last_row_items = len(_action_btns) % _COLS
-        if _last_row_items:
-            for _col in range(_last_row_items, _COLS):
-                grid.setColumnStretch(_col, 1)
-        for _col in range(_COLS):
-            grid.setColumnStretch(_col, 1)
-        setup_vl.addLayout(grid)
-
-        setup_group.setLayout(setup_vl)
-        vl.addWidget(setup_group)
-
         # ── Save button row ──────────────────────────────────────────────
         btn_row = QHBoxLayout()
         self._status_label = QLabel("")
@@ -840,28 +751,6 @@ class SettingsWidget(QWidget):
             self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;"),
             self._status_label.setText(msg.split("\n")[0]),
         ))
-        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
-        self._workers.append(w)
-        w.start()
-
-    def _run_play_store(self, enable: bool):
-        serials = self._get_serials_fn() if callable(self._get_serials_fn) else []
-        if not serials:
-            self._status_label.setStyleSheet("color: #c62828; font-size: 12px;")
-            self._status_label.setText("⚠ No devices found in table.")
-            return
-        btn = self._enable_play_btn if enable else self._disable_play_btn
-        btn.setEnabled(False)
-        w = _PlayStoreWorker(serials, enable)
-        w.progress.connect(lambda msg: (
-            self._status_label.setStyleSheet("color: #555; font-size: 12px;"),
-            self._status_label.setText(msg),
-        ))
-        w.finished.connect(lambda msg: (
-            self._status_label.setStyleSheet("color: #2e7d32; font-size: 12px;"),
-            self._status_label.setText(msg),
-        ))
-        w.finished.connect(lambda: btn.setEnabled(True))
         w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
         self._workers.append(w)
         w.start()

@@ -7,15 +7,17 @@ from __future__ import annotations
 
 import subprocess
 import os
+import asyncio
 import time
 from typing import List
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QGroupBox,
-    QComboBox, QSpacerItem, QSizePolicy,
+    QComboBox, QSpacerItem, QSizePolicy, QTextEdit, QSpinBox,
+    QScrollArea, QFrame,
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QThread
 
 # ── ADB startup-info (Windows) ──────────────────────────────────────────
 _si = subprocess.STARTUPINFO()
@@ -28,6 +30,113 @@ def _adb(serial: str, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
+
+class _PingWorker(QThread):
+    """Test connectivity / response time for a list of proxies."""
+    progress = Signal(str)
+    finished = Signal(str)
+
+    PROXY_TYPES = ("TCP", "SOCKS4", "SOCKS5", "HTTP")
+
+    def __init__(self, proxies: list, proxy_type: str = "TCP",
+                 timeout: int = 3, concurrency: int = 200):
+        super().__init__()
+        self.proxies = proxies
+        self.proxy_type = proxy_type
+        self.timeout = timeout
+        self.concurrency = concurrency
+        self._stop_flag = False
+
+    def stop(self):
+        self._stop_flag = True
+
+    def run(self):
+        ptype = self.proxy_type
+        timeout = self.timeout
+        stop_ref = self
+
+        async def _test_one(sem, proxy):
+            if stop_ref._stop_flag:
+                return None, None
+            proxy = proxy.strip()
+            if not proxy:
+                return None, None
+            parts = proxy.split(":")
+            if len(parts) != 2:
+                stop_ref.progress.emit(f"[SKIP] {proxy} — invalid format (use host:port)")
+                return None, None
+            ip, port_str = parts
+            try:
+                port = int(port_str)
+            except ValueError:
+                stop_ref.progress.emit(f"[SKIP] {proxy} — invalid port")
+                return None, None
+
+            async with sem:
+                if stop_ref._stop_flag:
+                    return None, None
+                try:
+                    t0 = time.perf_counter()
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(ip, port),
+                        timeout=timeout,
+                    )
+                    ok = True
+
+                    if ptype == "SOCKS5":
+                        writer.write(b"\x05\x01\x00")
+                        await writer.drain()
+                        resp = await asyncio.wait_for(reader.read(2), timeout=timeout)
+                        ok = (resp == b"\x05\x00")
+
+                    elif ptype == "SOCKS4":
+                        # SOCKS4 CONNECT to 0.0.0.0:80 (probe only)
+                        writer.write(b"\x04\x01\x00\x50\x00\x00\x00\x01\x00")
+                        await writer.drain()
+                        resp = await asyncio.wait_for(reader.read(8), timeout=timeout)
+                        ok = (len(resp) >= 2 and resp[1] == 0x5A)
+
+                    elif ptype == "HTTP":
+                        writer.write(b"HEAD / HTTP/1.0\r\nHost: " + ip.encode() + b"\r\n\r\n")
+                        await writer.drain()
+                        resp = await asyncio.wait_for(reader.read(64), timeout=timeout)
+                        ok = len(resp) > 0
+
+                    elapsed_ms = round((time.perf_counter() - t0) * 1000)
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+
+                    if ok:
+                        stop_ref.progress.emit(f"[OK] {proxy} — {elapsed_ms} ms")
+                        return proxy, elapsed_ms
+                    else:
+                        stop_ref.progress.emit(f"[FAIL] {proxy} — protocol mismatch")
+                        return None, None
+
+                except asyncio.TimeoutError:
+                    stop_ref.progress.emit(f"[TIMEOUT] {proxy}")
+                    return None, None
+                except Exception as e:
+                    stop_ref.progress.emit(f"[FAIL] {proxy}")
+                    return None, None
+
+        async def _run_all():
+            sem = asyncio.Semaphore(self.concurrency)
+            t_start = time.time()
+            tasks = [_test_one(sem, p) for p in self.proxies if p.strip()]
+            results = await asyncio.gather(*tasks)
+            live = [r for r in results if r[0] is not None]
+            total = len([p for p in self.proxies if p.strip()])
+            elapsed = round(time.time() - t_start, 2)
+            stop_ref.finished.emit(
+                f"✅ Done — Live: {len(live)}/{total} | Time: {elapsed}s"
+            )
+
+        asyncio.run(_run_all())
+
 
 class ProxyWidget(QWidget):
     """Proxy / SOCKS5 configuration panel rendered as a tab page."""
@@ -48,7 +157,7 @@ class ProxyWidget(QWidget):
         root.setSpacing(14)
 
         # ── Global proxy config form ─────────────────────────────────────
-        cfg_group = QGroupBox("🌐 Proxy Configuration")
+        cfg_group = QGroupBox("🌐 Configuration")
         cfg_group.setStyleSheet("""
             QGroupBox {
                 font-weight: bold;
@@ -262,6 +371,162 @@ class ProxyWidget(QWidget):
         cfg_group.setLayout(cfg_layout)
         root.addWidget(cfg_group)
 
+        # ── Ping / Proxy Test ─────────────────────────────────────────────
+        _GROUP_SS = """
+            QGroupBox {
+                font-weight: bold; font-size: 12px;
+                border: 1px solid #ddd; border-radius: 6px;
+                margin-top: 6px; padding-top: 4px;
+                background-color: #f8fff8;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; left: 10px;
+                padding: 0 4px; color: #2e7d32;
+            }
+        """
+        _INPUT_SS = (
+            "QLineEdit { border: 1px solid #ddd; border-radius: 4px;"
+            " padding: 2px 6px; background: #fff; color: #212121;"
+            " font-size: 11px; min-height: 20px; max-height: 24px; }"
+            "QLineEdit:focus { border: 1px solid #1976d2; }"
+        )
+        _BTN_TEST_SS = (
+            "QPushButton { background-color: #388e3c; color: white; font-weight: bold;"
+            " padding: 5px 14px; border-radius: 4px; font-size: 11px; }"
+            "QPushButton:hover { background-color: #2e7d32; }"
+            "QPushButton:disabled { background-color: #a5d6a7; }"
+        )
+        _BTN_STOP_SS = (
+            "QPushButton { background-color: #e53935; color: white; font-weight: bold;"
+            " padding: 5px 14px; border-radius: 4px; font-size: 11px; }"
+            "QPushButton:hover { background-color: #c62828; }"
+            "QPushButton:disabled { background-color: #ef9a9a; }"
+        )
+
+        ping_group = QGroupBox("🏓 Ping Test")
+        ping_group.setStyleSheet(_GROUP_SS)
+        ping_vl = QVBoxLayout()
+        ping_vl.setContentsMargins(10, 10, 10, 10)
+        ping_vl.setSpacing(8)
+
+        # Row 1: proxy type + timeout + concurrency + buttons
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(8)
+
+        lbl_ptype = QLabel("Type:")
+        lbl_ptype.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        ctrl_row.addWidget(lbl_ptype)
+        self._ping_type_combo = QComboBox()
+        self._ping_type_combo.addItems(["TCP (any)", "SOCKS5", "SOCKS4", "HTTP"])
+        self._ping_type_combo.setFixedWidth(110)
+        self._ping_type_combo.setStyleSheet(
+            "QComboBox { border: 1px solid #ddd; border-radius: 4px; padding: 2px 6px;"
+            " background: #fff; font-size: 11px; min-height: 20px; max-height: 24px; }"
+            "QComboBox:focus { border: 1px solid #1976d2; }"
+            "QComboBox::drop-down { border: none; width: 20px; }"
+        )
+        ctrl_row.addWidget(self._ping_type_combo)
+
+        lbl_timeout = QLabel("Timeout (s):")
+        lbl_timeout.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        ctrl_row.addWidget(lbl_timeout)
+        self._ping_timeout = QSpinBox()
+        self._ping_timeout.setRange(1, 30)
+        self._ping_timeout.setValue(3)
+        self._ping_timeout.setFixedWidth(55)
+        self._ping_timeout.setStyleSheet(
+            "QSpinBox { border: 1px solid #ddd; border-radius: 4px; padding: 2px 6px;"
+            " background: #fff; font-size: 11px; min-height: 20px; max-height: 24px; }"
+            "QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; }"
+        )
+        ctrl_row.addWidget(self._ping_timeout)
+
+        lbl_conc = QLabel("Concurrency:")
+        lbl_conc.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        ctrl_row.addWidget(lbl_conc)
+        self._ping_concurrency = QSpinBox()
+        self._ping_concurrency.setRange(1, 1000)
+        self._ping_concurrency.setValue(200)
+        self._ping_concurrency.setFixedWidth(65)
+        self._ping_concurrency.setStyleSheet(
+            "QSpinBox { border: 1px solid #ddd; border-radius: 4px; padding: 2px 6px;"
+            " background: #fff; font-size: 11px; min-height: 20px; max-height: 24px; }"
+            "QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; }"
+        )
+        ctrl_row.addWidget(self._ping_concurrency)
+
+        ctrl_row.addStretch()
+
+        self._ping_test_btn = QPushButton("▶ Test")
+        self._ping_test_btn.setStyleSheet(_BTN_TEST_SS)
+        self._ping_test_btn.clicked.connect(self._on_ping_test)
+        ctrl_row.addWidget(self._ping_test_btn)
+
+        self._ping_stop_btn = QPushButton("■ Stop")
+        self._ping_stop_btn.setStyleSheet(_BTN_STOP_SS)
+        self._ping_stop_btn.setEnabled(False)
+        self._ping_stop_btn.clicked.connect(self._on_ping_stop)
+        ctrl_row.addWidget(self._ping_stop_btn)
+
+        ping_vl.addLayout(ctrl_row)
+
+        # Row 2: Use from config button
+        use_config_row = QHBoxLayout()
+        use_config_row.setSpacing(6)
+        lbl_proxies = QLabel("Proxies (host:port, one per line):")
+        lbl_proxies.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        use_config_row.addWidget(lbl_proxies)
+        use_config_row.addStretch()
+        use_config_btn = QPushButton("📋 Use Config")
+        use_config_btn.setToolTip("Fill from the proxy config form above")
+        use_config_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #ccc; border-radius: 4px;"
+            " padding: 3px 10px; background: #f0f0f0; font-size: 11px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        use_config_btn.clicked.connect(self._ping_use_config)
+        use_config_row.addWidget(use_config_btn)
+        ping_vl.addLayout(use_config_row)
+
+        # Proxies input
+        self._ping_proxies_input = QTextEdit()
+        self._ping_proxies_input.setPlaceholderText(
+            "192.168.1.1:1080\n192.168.1.2:1080\n..."
+        )
+        self._ping_proxies_input.setFixedHeight(80)
+        self._ping_proxies_input.setStyleSheet(
+            "QTextEdit { border: 1px solid #ddd; border-radius: 4px;"
+            " padding: 4px 6px; background: #fff; font-size: 11px;"
+            " font-family: Consolas, monospace; }"
+            "QTextEdit:focus { border: 1px solid #1976d2; }"
+        )
+        ping_vl.addWidget(self._ping_proxies_input)
+
+        # Results label
+        lbl_results = QLabel("Results:")
+        lbl_results.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        ping_vl.addWidget(lbl_results)
+
+        self._ping_result_log = QTextEdit()
+        self._ping_result_log.setReadOnly(True)
+        self._ping_result_log.setFixedHeight(130)
+        self._ping_result_log.setStyleSheet(
+            "QTextEdit { background: #1e1e1e; color: #d4d4d4;"
+            " font-family: Consolas, monospace; font-size: 11px;"
+            " border: 1px solid #333; border-radius: 4px; padding: 4px 6px; }"
+        )
+        ping_vl.addWidget(self._ping_result_log)
+
+        # Summary label
+        self._ping_summary_lbl = QLabel("")
+        self._ping_summary_lbl.setStyleSheet("font-size: 11px; color: #2e7d32;")
+        ping_vl.addWidget(self._ping_summary_lbl)
+
+        ping_group.setLayout(ping_vl)
+        root.addWidget(ping_group)
+
+        self._ping_worker: "_PingWorker | None" = None
+
         root.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
 
         # Initial UI state
@@ -468,3 +733,56 @@ class ProxyWidget(QWidget):
             return "" if val in ("", "0") else val
         except Exception:
             return ""
+
+    # ── Ping handlers ─────────────────────────────────────────────────────
+    def _ping_use_config(self):
+        host = self._host_input.text().strip()
+        port = self._port_input.text().strip()
+        if host and port:
+            self._ping_proxies_input.setPlainText(f"{host}:{port}")
+        else:
+            self._set_status("⚠️ Enter host and port in the config form first.", ok=False)
+
+    def _on_ping_test(self):
+        raw = self._ping_proxies_input.toPlainText()
+        proxies = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if not proxies:
+            self._ping_summary_lbl.setStyleSheet("color: #c62828; font-size: 11px;")
+            self._ping_summary_lbl.setText("⚠ Enter at least one proxy (host:port).")
+            return
+
+        ptype_map = {"TCP (any)": "TCP", "SOCKS5": "SOCKS5", "SOCKS4": "SOCKS4", "HTTP": "HTTP"}
+        ptype = ptype_map.get(self._ping_type_combo.currentText(), "TCP")
+        timeout = self._ping_timeout.value()
+        concurrency = self._ping_concurrency.value()
+
+        self._ping_result_log.clear()
+        self._ping_summary_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._ping_summary_lbl.setText("⏳ Testing…")
+        self._ping_test_btn.setEnabled(False)
+        self._ping_stop_btn.setEnabled(True)
+
+        self._ping_worker = _PingWorker(proxies, ptype, timeout, concurrency)
+        self._ping_worker.progress.connect(self._on_ping_progress)
+        self._ping_worker.finished.connect(self._on_ping_finished)
+        self._ping_worker.start()
+
+    def _on_ping_stop(self):
+        if self._ping_worker and self._ping_worker.isRunning():
+            self._ping_worker.stop()
+            self._ping_summary_lbl.setStyleSheet("color: #e65100; font-size: 11px;")
+            self._ping_summary_lbl.setText("⏹ Stopping…")
+            self._ping_stop_btn.setEnabled(False)
+
+    def _on_ping_progress(self, msg: str):
+        self._ping_result_log.append(msg)
+        sb = self._ping_result_log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _on_ping_finished(self, summary: str):
+        self._ping_test_btn.setEnabled(True)
+        self._ping_stop_btn.setEnabled(False)
+        color = "#2e7d32" if "Done" in summary else "#c62828"
+        self._ping_summary_lbl.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._ping_summary_lbl.setText(summary)
+        self._ping_worker = None

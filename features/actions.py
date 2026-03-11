@@ -483,7 +483,7 @@ class ActionsWidget(QWidget):
         label = f"Device: {serial}" if serial else "No device selected"
         self._device_label.setText(label)
         enabled = bool(serial)
-        for btn in (self._open_url_btn, self._login_gmail_btn,
+        for btn in (self._open_url_btn, self._typing_btn, self._login_gmail_btn,
                     self._ss_take_btn, self._rec_start_btn):
             btn.setEnabled(enabled)
         self._start_click_btn.setEnabled(enabled and self._coord_list.count() > 0)
@@ -532,6 +532,33 @@ class ActionsWidget(QWidget):
 
         url_group.setLayout(url_vl)
         ivl.addWidget(url_group)
+
+        # ── Typing group ──────────────────────────────────────────────────
+        typing_group = QGroupBox("⌨️ Typing")
+        typing_group.setStyleSheet(_GROUP_SS)
+        typing_vl = QVBoxLayout()
+        typing_vl.setContentsMargins(12, 10, 12, 10)
+        typing_vl.setSpacing(8)
+
+        typing_row = QHBoxLayout()
+        typing_row.setSpacing(6)
+        lbl_type = QLabel("Text:")
+        lbl_type.setStyleSheet(_LABEL_SS)
+        typing_row.addWidget(lbl_type)
+        self._typing_input = QLineEdit()
+        self._typing_input.setPlaceholderText("Enter text to type on device…")
+        self._typing_input.setStyleSheet(_INPUT_SS)
+        self._typing_input.returnPressed.connect(self._run_typing)
+        typing_row.addWidget(self._typing_input, 1)
+        self._typing_btn = QPushButton("⌨️ Type Text")
+        self._typing_btn.setStyleSheet(_BTN_PRIMARY_SS)
+        self._typing_btn.setEnabled(False)
+        self._typing_btn.clicked.connect(self._run_typing)
+        typing_row.addWidget(self._typing_btn)
+        typing_vl.addLayout(typing_row)
+
+        typing_group.setLayout(typing_vl)
+        ivl.addWidget(typing_group)
 
         # ── Login Gmail group ─────────────────────────────────────────────
         gmail_group = QGroupBox("📧 Login Gmail")
@@ -844,7 +871,7 @@ class ActionsWidget(QWidget):
         ss_opt_row.addStretch()
         ss_vl.addLayout(ss_opt_row)
 
-        # Action row: Take button + open folder
+        # Action row: Take button + open folder + delete
         ss_action_row = QHBoxLayout()
         ss_action_row.setSpacing(6)
         self._ss_take_btn = QPushButton("📸 Take Screenshot")
@@ -856,6 +883,14 @@ class ActionsWidget(QWidget):
         ss_folder_btn.setStyleSheet(_BTN_SECONDARY_SS)
         ss_folder_btn.clicked.connect(self._open_ss_folder)
         ss_action_row.addWidget(ss_folder_btn)
+        ss_del_btn = QPushButton("🗑 Delete")
+        ss_del_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #ef9a9a; border-radius: 4px;"
+            " padding: 4px 10px; background: #ffebee; font-size: 11px; }"
+            "QPushButton:hover { background: #ffcdd2; }"
+        )
+        ss_del_btn.clicked.connect(self._delete_selected_screenshot)
+        ss_action_row.addWidget(ss_del_btn)
         ss_action_row.addStretch()
         ss_vl.addLayout(ss_action_row)
 
@@ -873,24 +908,6 @@ class ActionsWidget(QWidget):
         self._ss_list.setFixedHeight(90)
         self._ss_list.itemDoubleClicked.connect(self._on_ss_list_double_click)
         ss_vl.addWidget(self._ss_list)
-
-        # List action buttons
-        ss_list_btn_row = QHBoxLayout()
-        ss_list_btn_row.setSpacing(4)
-        ss_preview_btn = QPushButton("👁 Preview")
-        ss_preview_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        ss_preview_btn.clicked.connect(self._preview_selected_screenshot)
-        ss_list_btn_row.addWidget(ss_preview_btn)
-        ss_del_btn = QPushButton("🗑 Delete")
-        ss_del_btn.setStyleSheet(
-            "QPushButton { border: 1px solid #ef9a9a; border-radius: 4px;"
-            " padding: 4px 10px; background: #ffebee; font-size: 11px; }"
-            "QPushButton:hover { background: #ffcdd2; }"
-        )
-        ss_del_btn.clicked.connect(self._delete_selected_screenshot)
-        ss_list_btn_row.addWidget(ss_del_btn)
-        ss_list_btn_row.addStretch()
-        ss_vl.addLayout(ss_list_btn_row)
 
         ss_group.setLayout(ss_vl)
         ivl.addWidget(ss_group)
@@ -934,6 +951,7 @@ class ActionsWidget(QWidget):
         self._rec_audio_cb = QCheckBox("🔊 With audio")
         self._rec_audio_cb.setStyleSheet(_CB_SS)
         self._rec_audio_cb.setToolTip("Include device audio (requires Android 10+, --audio flag)")
+        self._rec_audio_cb.setChecked(True)
         rec_opt1.addWidget(self._rec_audio_cb)
 
         rec_opt1.addStretch()
@@ -976,7 +994,7 @@ class ActionsWidget(QWidget):
 
         rec_ctrl_row.addStretch()
 
-        self._rec_status_lbl = QLabel("Idle")
+        self._rec_status_lbl = QLabel("")
         self._rec_status_lbl.setStyleSheet("color:#888; font-size:10px; font-style:italic;")
         rec_ctrl_row.addWidget(self._rec_status_lbl)
 
@@ -1005,10 +1023,6 @@ class ActionsWidget(QWidget):
         # List action buttons
         rec_list_btn_row = QHBoxLayout()
         rec_list_btn_row.setSpacing(4)
-        rec_play_btn = QPushButton("▶ Play")
-        rec_play_btn.setStyleSheet(_BTN_SECONDARY_SS)
-        rec_play_btn.clicked.connect(self._play_selected_video)
-        rec_list_btn_row.addWidget(rec_play_btn)
         rec_open_folder_btn = QPushButton("📂 Open Folder")
         rec_open_folder_btn.setStyleSheet(_BTN_SECONDARY_SS)
         rec_open_folder_btn.clicked.connect(self._open_rec_folder)
@@ -1046,6 +1060,30 @@ class ActionsWidget(QWidget):
         w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
         self._workers.append(w)
         w.start()
+
+    def _run_typing(self):
+        if not self._serial:
+            return
+        text = self._typing_input.text()
+        if not text:
+            self.status_update.emit("⚠ Please enter text to type.")
+            return
+        escaped = (text
+                   .replace("\\", "\\\\")
+                   .replace("'", "\\'")
+                   .replace('"', '\\"')
+                   .replace(" ", "%s")
+                   .replace("&", "\\&")
+                   .replace(";", "\\;")
+                   .replace("|", "\\|")
+                   .replace("(", "\\(")
+                   .replace(")", "\\)"))
+        try:
+            _adb(self._serial, "shell", "input", "text", escaped)
+            preview = text[:40] + ("…" if len(text) > 40 else "")
+            self.status_update.emit(f"⌨️ Typed: {preview}")
+        except Exception as e:
+            self.status_update.emit(f"❌ Typing failed: {e}")
 
     def _run_login_gmail(self):
         if not self._serial:

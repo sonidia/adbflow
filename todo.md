@@ -12,16 +12,11 @@ adb shell screenrecord /sdcard/video.mp4
 Ví dụ:
 
 ```bash
-adb shell input text hello
 adb shell input keyevent 26
 ```
 
 ```bash
 adb shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1
-```
-
-```bash
-adb shell input swipe 300 1000 300 300
 ```
 
 ## Backup & restore dữ liệu
@@ -595,13 +590,11 @@ Sau đó:
 adb shell dumpsys binder_calls_stats
 ```
 
-Xem IPC calls của toàn hệ thống.
-
-Xem route
-
-adb shell ip route
+Xem route: adb shell ip route
 
 Xem IP: adb shell ip addr show
+
+adb shell netstat
 
 Ping server: adb shell ping google.com
 
@@ -617,4 +610,4 @@ Mount system RW
 
 adb shell mount -o rw,remount /system
 
-<!-- ở tab proxy, thêm 1 section ping để test repsonse time của proxy/sock, check ip của proxy/sock, check status của proxy/sock (support nhiều loại proxy và sock, sock5, sock4....) -->
+<!-- tắt title bar mặc định và tự vẽ thanh title bar với các nút giống như mặc định (Minimize, Maximize, Close) nhưng thêm Custom button. (lưu ý các nút ) phải hoạt động giống như mặc định, ví dụ: Minimize thì thu nhỏ app xuống taskbar, Maximize thì phóng to app lên full screen, Close thì đóng app. Custom button thì sẽ mở một menu nhỏ với các tùy chọn như "Settings", "Help", "About". Menu này sẽ xuất hiện ngay dưới Custom button khi người dùng click vào nó. Ngoài ra, giao diện của thanh title bar và các nút phải được thiết kế sao cho hài hòa với giao diện tổng thể của ứng dụng, có thể sử dụng màu sắc và kiểu dáng phù hợp để tạo sự đồng nhất. -->
