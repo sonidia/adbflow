@@ -512,6 +512,8 @@ Xem IP: adb shell ip addr show
 Xem netstat: adb shell netstat
 Ping server: adb shell ping google.com
 
+RAM: adb shell free -h
+
 ROM modding
 
 Remount system
@@ -521,3 +523,36 @@ adb remount
 Mount system RW
 
 adb shell mount -o rw,remount /system
+
+<!-- [gsm.operator.iso-country]: [vn]
+[gsm.operator.isroaming]: [false]
+[gsm.operator.numeric]: [45202]
+[gsm.sim.state]: [ABSENT]
+[gsm.version.baseband]: [G960NKOU5FVA1]
+[net.socks5.host]: [192.168.1.45]
+[persist.sys.timezone]: [Europe/Paris]
+[ril.model_id]: [QB21498009]
+[ril.modem.board]: [SHANNON360]
+[ril.product_code]: [SM-G960NZKAKTC]
+[ro.board.platform]: [msmnile]
+[ro.boot.bootloader]: [G960NKSU5FVA2]
+[ro.boot.carrierid]: [KTC]
+[ro.boot.em.did]: [20080e0d8dd40011]
+[ro.boot.hardware]: [samsungexynos9810]
+[ro.boot.hmac_mismatch]: [0]
+[ro.build.host]: [rd-build-92]
+[ro.build.version.min_supported_target_sdk]: [23]
+[ro.config.bluetooth]: [external]
+[ro.config.max_snapshot_num]: [3]
+[ro.config.alarm_alert]: [Hassium.ogg]
+[ro.config.media_sound]: [Media_preview_Touch_the_light.ogg]
+[ro.config.notification_sound]: [Argon.ogg]
+[ro.config.notification_sound_2]: [S_Charming_Bell.ogg]
+[ro.config.ringtone]: [Orion.ogg]
+[ro.config.ringtone_2]: [Basic_Bell.ogg]
+[ro.opengles.version]: [196610]
+[ro.product.device]: [OnePlus7TProNR]
+[ro.product.locale]: [en-US]
+[ro.vendor.build.date]: [Sat Nov 23 11:21:36 UTC 2019]
+[ro.vendor.build.date.utc]: [1574508096]
+[ro.vendor.build.fingerprint]: [OnePlus/OnePlus7TProNR/OnePlus7TProNR:1 -->

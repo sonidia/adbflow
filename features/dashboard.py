@@ -375,6 +375,43 @@ class _FetchWorker(QThread):
             # ── Uptime ────────────────────────────────────────────────────
             uptime = _shell(s, "uptime")
 
+            # ── Extra device properties ───────────────────────────────────
+            _EXTRA_PROPS = [
+                "gsm.operator.iso-country",
+                "gsm.operator.isroaming",
+                "gsm.operator.numeric",
+                "gsm.sim.state",
+                "gsm.version.baseband",
+                "net.socks5.host",
+                "persist.sys.timezone",
+                "ril.model_id",
+                "ril.modem.board",
+                "ril.product_code",
+                "ro.board.platform",
+                "ro.boot.bootloader",
+                "ro.boot.carrierid",
+                "ro.boot.em.did",
+                "ro.boot.hardware",
+                "ro.boot.hmac_mismatch",
+                "ro.build.host",
+                "ro.build.version.min_supported_target_sdk",
+                "ro.config.bluetooth",
+                "ro.config.max_snapshot_num",
+                "ro.config.alarm_alert",
+                "ro.config.media_sound",
+                "ro.config.notification_sound",
+                "ro.config.notification_sound_2",
+                "ro.config.ringtone",
+                "ro.config.ringtone_2",
+                "ro.opengles.version",
+                "ro.product.device",
+                "ro.product.locale",
+                "ro.vendor.build.date",
+                "ro.vendor.build.date.utc",
+                "ro.vendor.build.fingerprint",
+            ]
+            extra_props = {k: props.get(k, "") for k in _EXTRA_PROPS}
+
             self.result.emit({
                 "brand":         brand,
                 "model":         model,
@@ -396,6 +433,7 @@ class _FetchWorker(QThread):
                 "longitude":          lon,
                 "wifi_name":          wifi_name,
                 "uptime":             uptime,
+                "extra_props":        extra_props,
             })
         except Exception as e:
             self.error.emit(str(e))
@@ -805,6 +843,74 @@ class DashboardWidget(QWidget):
             _btn_primary, _btn_success,
         )
 
+        # ── Properties ───────────────────────────────────────────────────
+        props_group = QGroupBox("⚙ Properties")
+        props_group.setStyleSheet(_GROUP_SS)
+        props_vl = QVBoxLayout()
+        props_vl.setContentsMargins(12, 6, 12, 6)
+        props_vl.setSpacing(4)
+
+        _PROP_FIELDS = [
+            ("gsm.operator.iso-country",               "🌍 GSM ISO Country"),
+            ("gsm.operator.isroaming",                 "📡 Roaming"),
+            ("gsm.operator.numeric",                   "🔢 GSM Operator Numeric"),
+            ("gsm.sim.state",                          "💳 SIM State"),
+            ("gsm.version.baseband",                   "📻 Baseband Version"),
+            ("net.socks5.host",                        "🔌 SOCKS5 Host"),
+            ("persist.sys.timezone",                   "🕐 Timezone"),
+            ("ril.model_id",                           "🏷 RIL Model ID"),
+            ("ril.modem.board",                        "📟 Modem Board"),
+            ("ril.product_code",                       "🔖 Product Code"),
+            ("ro.board.platform",                      "🖥 Board Platform"),
+            ("ro.boot.bootloader",                     "🔒 Bootloader"),
+            ("ro.boot.carrierid",                      "📶 Carrier ID"),
+            ("ro.boot.em.did",                         "🔑 EM DID"),
+            ("ro.boot.hardware",                       "⚙ Hardware"),
+            ("ro.boot.hmac_mismatch",                  "⚠ HMAC Mismatch"),
+            ("ro.build.host",                          "🏗 Build Host"),
+            ("ro.build.version.min_supported_target_sdk", "🔧 Min Target SDK"),
+            ("ro.config.bluetooth",                    "🔵 Bluetooth Config"),
+            ("ro.config.max_snapshot_num",             "📸 Max Snapshots"),
+            ("ro.config.alarm_alert",                  "⏰ Alarm Sound"),
+            ("ro.config.media_sound",                  "🎵 Media Sound"),
+            ("ro.config.notification_sound",           "🔔 Notification Sound"),
+            ("ro.config.notification_sound_2",         "🔔 Notification Sound 2"),
+            ("ro.config.ringtone",                     "📳 Ringtone"),
+            ("ro.config.ringtone_2",                   "📳 Ringtone 2"),
+            ("ro.opengles.version",                    "🎮 OpenGL ES Version"),
+            ("ro.product.device",                      "📱 Product Device"),
+            ("ro.product.locale",                      "🌐 Product Locale"),
+            ("ro.vendor.build.date",                   "📅 Vendor Build Date"),
+            ("ro.vendor.build.date.utc",               "🕐 Vendor Build UTC"),
+            ("ro.vendor.build.fingerprint",            "🔏 Vendor Fingerprint"),
+        ]
+
+        # Render in 2 columns using a grid layout
+        props_grid = QGridLayout()
+        props_grid.setSpacing(3)
+        props_grid.setContentsMargins(0, 0, 0, 0)
+        self._prop_fields: dict[str, QLineEdit] = {}
+        col_count = 2
+        for idx, (prop_key, prop_label) in enumerate(_PROP_FIELDS):
+            row_i = idx // col_count
+            col_i = (idx % col_count) * 2
+            lbl = QLabel(prop_label)
+            lbl.setStyleSheet(_LABEL_SS)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            le = QLineEdit()
+            le.setReadOnly(True)
+            le.setStyleSheet(_FIELD_SS)
+            le.setPlaceholderText("–")
+            self._prop_fields[prop_key] = le
+            props_grid.addWidget(lbl, row_i, col_i)
+            props_grid.addWidget(le, row_i, col_i + 1)
+
+        props_grid.setColumnStretch(1, 1)
+        props_grid.setColumnStretch(3, 1)
+        props_vl.addLayout(props_grid)
+        props_group.setLayout(props_vl)
+        inner_vl.addWidget(props_group)
+
         # ── Live Device Metrics ───────────────────────────────────────────
         metrics_group = QGroupBox("📈 Live Device Metrics")
         metrics_group.setStyleSheet(_GROUP_SS)
@@ -931,6 +1037,32 @@ class DashboardWidget(QWidget):
         diag_cols.addStretch()
         diag_vl.addLayout(diag_cols)
 
+        # — Disk table (moved here from Disk section) —
+        _disk_lbl2 = QLabel("💽 Disk (df)")
+        _disk_lbl2.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
+        diag_vl.addWidget(_disk_lbl2)
+
+        self._disk_table = QTableWidget()
+        self._disk_table.setColumnCount(6)
+        self._disk_table.setHorizontalHeaderLabels(
+            ["Filesystem", "1K-blocks", "Used", "Available", "Use%", "Mounted on"]
+        )
+        self._disk_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._disk_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._disk_table.setAlternatingRowColors(True)
+        self._disk_table.verticalHeader().hide()
+        self._disk_table.setFixedHeight(200)
+        _dh2 = self._disk_table.horizontalHeader()
+        _dh2.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        _dh2.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        for _ci in range(1, 5):
+            _dh2.setSectionResizeMode(_ci, QHeaderView.ResizeMode.ResizeToContents)
+        self._disk_table.setStyleSheet(
+            "QTableWidget { font-size: 10px; gridline-color: #e0e0e0; font-family: Consolas, monospace; }"
+            "QHeaderView::section { font-weight: bold; background: #f0f0f0; font-size: 10px; }"
+        )
+        diag_vl.addWidget(self._disk_table)
+
         # — Procrank process memory table —
         _proc_lbl = QLabel("🔬 Process Memory (procrank)")
         _proc_lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #555;")
@@ -999,51 +1131,6 @@ class DashboardWidget(QWidget):
         top_group.setLayout(top_vl)
         inner_vl.addWidget(top_group)
 
-        # ── Disk Info ─────────────────────────────────────────────────────
-        disk_group = QGroupBox("💽 Disk")
-        disk_group.setStyleSheet(_GROUP_SS)
-        disk_vl = QVBoxLayout()
-        disk_vl.setContentsMargins(10, 10, 10, 10)
-        disk_vl.setSpacing(6)
-
-        disk_btn_row = QHBoxLayout()
-        disk_btn_row.setSpacing(6)
-        disk_refresh_btn = QPushButton("🔄 Refresh Disk")
-        disk_refresh_btn.setFixedHeight(28)
-        disk_refresh_btn.setStyleSheet(
-            "QPushButton { border:1px solid #bdbdbd; border-radius:4px;"
-            " padding:2px 10px; background:#f0f0f0; font-size:11px; }"
-            "QPushButton:hover { background:#e0e0e0; }"
-        )
-        disk_refresh_btn.clicked.connect(self._diag_run_disk)
-        disk_btn_row.addWidget(disk_refresh_btn)
-        disk_btn_row.addStretch()
-        disk_vl.addLayout(disk_btn_row)
-
-        self._disk_table = QTableWidget()
-        self._disk_table.setColumnCount(6)
-        self._disk_table.setHorizontalHeaderLabels(
-            ["Filesystem", "1K-blocks", "Used", "Available", "Use%", "Mounted on"]
-        )
-        self._disk_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._disk_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._disk_table.setAlternatingRowColors(True)
-        self._disk_table.verticalHeader().hide()
-        self._disk_table.setFixedHeight(220)
-        _dh = self._disk_table.horizontalHeader()
-        _dh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        _dh.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        for _ci in range(1, 5):
-            _dh.setSectionResizeMode(_ci, QHeaderView.ResizeMode.ResizeToContents)
-        self._disk_table.setStyleSheet(
-            "QTableWidget { font-size: 10px; gridline-color: #e0e0e0; font-family: Consolas, monospace; }"
-            "QHeaderView::section { font-weight: bold; background: #f0f0f0; font-size: 10px; }"
-        )
-        disk_vl.addWidget(self._disk_table)
-
-        disk_group.setLayout(disk_vl)
-        inner_vl.addWidget(disk_group)
-
         # Keep references for use in methods
         self._DonutRow = _DonutRow
         self._MetricsWorker = _MetricsWorker
@@ -1086,6 +1173,10 @@ class DashboardWidget(QWidget):
         for f in self._all_data_fields:
             f.setText(txt)
             f.setStyleSheet(ss)
+        # Clear / update property fields too
+        for le in self._prop_fields.values():
+            le.setText(txt)
+            le.setStyleSheet(ss)
 
     def _clear_fields(self):
         self._set_state("clear")
@@ -1117,6 +1208,12 @@ class DashboardWidget(QWidget):
         if not self._manual_wifi_cb.isChecked():
             self._f_wifi.setText(data.get("wifi_name", ""))
             self._f_wifi.setStyleSheet(_FIELD_SS)
+
+        # ── Populate Properties section ────────────────────────────────
+        extra_props = data.get("extra_props", {})
+        for prop_key, le in self._prop_fields.items():
+            le.setText(extra_props.get(prop_key, ""))
+            le.setStyleSheet(_FIELD_SS)
 
     def _on_error(self, msg: str):
         self._set_state("error")

@@ -290,24 +290,49 @@ class CookieLoaderGUI(QWidget):
 
     def initUI(self):
         self.setWindowTitle(self.app_name)
-        self.setGeometry(300, 300, 940, 600)
+        self.setGeometry(300, 100, 940, 600)
+        self.setFixedHeight(600)
         self.setWindowIcon(QIcon(self.icon))
         # Remove OS title bar – we draw our own
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         # ── Outer wrapper: title bar on top, content below ───────────────
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # Rounded frame container — gives the whole window rounded corners
+        self._frame = QWidget(self)
+        self._frame.setObjectName("AppFrame")
+        self._frame.setStyleSheet(
+            "QWidget#AppFrame {"
+            "  background-color: #f4f6fc;"
+            "  border-radius: 10px;"
+            "  border: 1px solid #c5cae9;"
+            "}"
+        )
+        frame_vl = QVBoxLayout(self._frame)
+        frame_vl.setContentsMargins(0, 0, 0, 0)
+        frame_vl.setSpacing(0)
+        outer.addWidget(self._frame)
+
         self.title_bar = TitleBar(self, title=self.app_name, icon_path=self.icon)
+        self.title_bar.setStyleSheet(
+            self.title_bar.styleSheet() +
+            "QWidget#TitleBar { border-top-left-radius: 10px; border-top-right-radius: 10px; }"
+        )
         self.title_bar.menu_settings_clicked.connect(lambda: self._open_tab(2))
         self.title_bar.menu_help_clicked.connect(self._show_help)
         # menu_about_clicked is handled internally by TitleBar (opens AboutDialog)
-        outer.addWidget(self.title_bar)
+        frame_vl.addWidget(self.title_bar)
 
         # Content widget holds the original horizontal layout
         content_widget = QWidget()
+        content_widget.setObjectName("ContentWidget")
+        content_widget.setStyleSheet(
+            "#ContentWidget { background-color: #f4f6fc; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }"
+        )
         layout = QHBoxLayout(content_widget)
         layout.setSpacing(0)
 
@@ -727,7 +752,7 @@ class CookieLoaderGUI(QWidget):
         layout.addWidget(right_panel, 1)
         layout.addWidget(self.preview_panel)
 
-        outer.addWidget(content_widget, 1)
+        frame_vl.addWidget(content_widget, 1)
         self.setLayout(outer)
 
         # Wire table row selection → update Info / Actions with selected serial
@@ -1152,6 +1177,7 @@ class CookieLoaderGUI(QWidget):
                      "--window-height", str(self.preview_height)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 launched += 1
                 self.update_status(f'📱 Opening remote for: {serial}')
@@ -1197,6 +1223,7 @@ class CookieLoaderGUI(QWidget):
                  "--window-height", str(self.preview_height)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             self._scrcpy_proc = proc
             self._current_preview_serial = serial

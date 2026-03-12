@@ -407,13 +407,19 @@ class ProxyWidget(QWidget):
         port_group = QGroupBox("🔀 Port Forward / Reverse")
         port_group.setStyleSheet(_PORT_GROUP_SS)
         port_vl = QVBoxLayout()
-        port_vl.setContentsMargins(10, 10, 10, 10)
+        port_vl.setContentsMargins(10, 10, 10, 100)
         port_vl.setSpacing(10)
 
+        # ── Two columns: Forward | Reverse ────────────────────────────────
+        port_cols = QHBoxLayout()
+        port_cols.setSpacing(16)
+
         # ── Forward section ───────────────────────────────────────────────
+        fwd_col = QVBoxLayout()
+        fwd_col.setSpacing(6)
         fwd_lbl = QLabel("➡ Forward")
         fwd_lbl.setStyleSheet(_PORT_LBL_SS)
-        port_vl.addWidget(fwd_lbl)
+        fwd_col.addWidget(fwd_lbl)
 
         fwd_row = QHBoxLayout()
         fwd_row.setSpacing(6)
@@ -435,26 +441,41 @@ class ProxyWidget(QWidget):
         self._fwd_dev_port.setFixedWidth(90)
         self._fwd_dev_port.setStyleSheet(_PORT_INPUT_SS)
         fwd_row.addWidget(self._fwd_dev_port)
-
         fwd_row.addStretch()
+        fwd_col.addLayout(fwd_row)
 
+        fwd_btn_row = QHBoxLayout()
+        fwd_btn_row.setSpacing(6)
         fwd_apply_btn = QPushButton("▶ Forward")
         fwd_apply_btn.setStyleSheet(_PORT_BTN_SS)
         fwd_apply_btn.clicked.connect(self._on_forward_apply)
-        fwd_row.addWidget(fwd_apply_btn)
+        fwd_btn_row.addWidget(fwd_apply_btn)
 
         fwd_rm_btn = QPushButton("✖ Remove All")
         fwd_rm_btn.setStyleSheet(_PORT_BTN_RM_SS)
         fwd_rm_btn.setToolTip("Remove all forward port forwards")
         fwd_rm_btn.clicked.connect(self._on_forward_remove_all)
-        fwd_row.addWidget(fwd_rm_btn)
+        fwd_btn_row.addWidget(fwd_rm_btn)
+        fwd_btn_row.addStretch()
+        fwd_col.addLayout(fwd_btn_row)
 
-        port_vl.addLayout(fwd_row)
+        fwd_w = QWidget()
+        fwd_w.setLayout(fwd_col)
+        port_cols.addWidget(fwd_w, 1)
+
+        # ── Separator ─────────────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("color: #ddd;")
+        port_cols.addWidget(sep)
 
         # ── Reverse section ───────────────────────────────────────────────
+        rev_col = QVBoxLayout()
+        rev_col.setSpacing(6)
         rev_lbl = QLabel("⬅ Reverse")
         rev_lbl.setStyleSheet(_PORT_LBL_SS)
-        port_vl.addWidget(rev_lbl)
+        rev_col.addWidget(rev_lbl)
 
         rev_row = QHBoxLayout()
         rev_row.setSpacing(6)
@@ -476,21 +497,29 @@ class ProxyWidget(QWidget):
         self._rev_host_port.setFixedWidth(90)
         self._rev_host_port.setStyleSheet(_PORT_INPUT_SS)
         rev_row.addWidget(self._rev_host_port)
-
         rev_row.addStretch()
+        rev_col.addLayout(rev_row)
 
+        rev_btn_row = QHBoxLayout()
+        rev_btn_row.setSpacing(6)
         rev_apply_btn = QPushButton("▶ Reverse")
         rev_apply_btn.setStyleSheet(_PORT_BTN_SS)
         rev_apply_btn.clicked.connect(self._on_reverse_apply)
-        rev_row.addWidget(rev_apply_btn)
+        rev_btn_row.addWidget(rev_apply_btn)
 
         rev_rm_btn = QPushButton("✖ Remove All")
         rev_rm_btn.setStyleSheet(_PORT_BTN_RM_SS)
         rev_rm_btn.setToolTip("Remove all reverse port forwards")
         rev_rm_btn.clicked.connect(self._on_reverse_remove_all)
-        rev_row.addWidget(rev_rm_btn)
+        rev_btn_row.addWidget(rev_rm_btn)
+        rev_btn_row.addStretch()
+        rev_col.addLayout(rev_btn_row)
 
-        port_vl.addLayout(rev_row)
+        rev_w = QWidget()
+        rev_w.setLayout(rev_col)
+        port_cols.addWidget(rev_w, 1)
+
+        port_vl.addLayout(port_cols)
 
         # ── Status label ──────────────────────────────────────────────────
         self._port_status_lbl = QLabel("")
