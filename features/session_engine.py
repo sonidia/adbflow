@@ -17,6 +17,7 @@ import time
 import uuid
 import random as _random_module
 import logging
+import threading
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -289,6 +290,21 @@ def browse_session(
     overshoot_prob: float | None = None,
     scroll_style_weights: dict | None = None,
     profile: str | None = None,
+    # ── Stop event for immediate cancellation ────────────────────
+    stop_event: threading.Event | None = None,
+    # ── NEW advanced behavior params ───────────────────────────
+    scroll_up_chance: float | None = None,
+    idle_chance: float | None = None,
+    idle_duration_min: float | None = None,
+    idle_duration_max: float | None = None,
+    pre_click_hover_min: float | None = None,
+    pre_click_hover_max: float | None = None,
+    misclick_chance: float | None = None,
+    tab_inactive_chance: float | None = None,
+    tab_inactive_min: float | None = None,
+    tab_inactive_max: float | None = None,
+    page_settle_min: float | None = None,
+    page_settle_max: float | None = None,
 ) -> dict:
     """
     Human-like browsing session — scrolling is the dominant action (~75 % of time).
@@ -312,11 +328,14 @@ def browse_session(
         Force a specific PROFILES key ("fast_scroller", "careful_reader",
         "distracted") instead of picking randomly.
 
-    Returns
-    -------
-    dict
-        ``{"swipe_count": int, "click_count": int, "duration": float,
-           "profile": str, "session_id": str}``
+    New advanced parameters:
+    - stop_event: threading.Event; when set, session aborts immediately.
+    - scroll_up_chance: override probability for scroll-up actions (0–1).
+    - idle_chance/duration: probability and duration range for random idle pauses.
+    - pre_click_hover: delay range (seconds) before clicks to simulate hover.
+    - misclick_chance: override profile’s misclick probability.
+    - tab_inactive_chance/duration: probability and duration for tab switch simulation.
+    - page_settle_delay: delay range after page navigation.
     """
     # ── Seeded RNG for reproducibility ──────────────────────────────
     session_id = uuid.uuid4().hex[:12]
@@ -341,6 +360,24 @@ def browse_session(
         p["swipe_speed_ms"] = (p["swipe_speed_ms"][0], swipe_speed_max_ms)
     if overshoot_prob is not None:
         p["overshoot_prob"] = max(0.0, min(1.0, overshoot_prob))
+    # Apply new advanced overrides
+    if scroll_up_chance is not None:
+        p["scroll_up_prob"] = max(0.0, min(1.0, scroll_up_chance))
+    if misclick_chance is not None:
+        p["misclick_prob"] = max(0.0, min(1.0, misclick_chance))
+    if idle_chance is not None:
+        p["idle_prob"] = max(0.0, min(1.0, idle_chance))
+
+    # Advanced behavior defaults
+    _idle_dur_min = idle_duration_min if idle_duration_min is not None else 3.0
+    _idle_dur_max = idle_duration_max if idle_duration_max is not None else 10.0
+    _hover_min = pre_click_hover_min if pre_click_hover_min is not None else 0.35
+    _hover_max = pre_click_hover_max if pre_click_hover_max is not None else 1.4
+    _tab_chance = tab_inactive_chance if tab_inactive_chance is not None else 0.0
+    _tab_min = tab_inactive_min if tab_inactive_min is not None else 4.0
+    _tab_max = tab_inactive_max if tab_inactive_max is not None else 18.0
+    _settle_min = page_settle_min if page_settle_min is not None else 1.5
+    _settle_max = page_settle_max if page_settle_max is not None else 4.0
 
     target_duration = rng.uniform(min_duration, max_duration)
     session_start = time.time()
@@ -468,7 +505,7 @@ def browse_session(
     def return_origin(lo: float = 0.7, hi: float = 1.5):
         if original_url:
             cdp.navigate(original_url)
-            time.sleep(rng.uniform(lo, hi))
+            time.sleep(rng.uniform(_settle_min, _settle_max))
             refresh_zone()
             refresh_elems()
         else:
@@ -479,6 +516,11 @@ def browse_session(
     # MAIN LOOP
     # ════════════════════════════════════════════════════════════════
     while True:
+        # ── Check stop event ────────────────────────────────────────
+        if stop_event and stop_event.is_set():
+            alog.record(action="stopped_by_user", elapsed=round(time.time() - session_start))
+            break
+
         elapsed = time.time() - session_start
         remaining = target_duration - elapsed
         if remaining <= 0:
@@ -489,9 +531,17 @@ def browse_session(
         state = _next_state(state, rng)
         action_no += 1
 
-        # ── IDLE ─────────────────────────────────────────────────────
+        # ── Tab inactive simulation ────────────────────────────────
+        if _tab_chance > 0 and rng.random() < _tab_chance:
+            tab_dur = min(rng.uniform(_tab_min, _tab_max), remaining * 0.15)
+            if tab_dur > 1.0:
+                alog.record(action="tab_inactive", duration=round(tab_dur, 1))
+                time.sleep(tab_dur)
+                continue
+
+        # ── IDLE ─────────────────────────────────────────────────
         if state == "IDLE" and action_no % 8 == 0:
-            idle_t = min(rng.uniform(0.8, 3.5), remaining * 0.12)
+            idle_t = min(rng.uniform(_idle_dur_min, _idle_dur_max), remaining * 0.12)
             if idle_t > 0.5:
                 alog.record(action="idle", duration=round(idle_t, 1))
                 time.sleep(idle_t)
@@ -692,7 +742,9 @@ def browse_session(
                 tgt = rng.choice(pool)
                 tx, ty = tgt["x"], tgt["y"]
                 alog.record(action="click", type=tgt["type"], x=tx, y=ty)
-                time.sleep(rng.uniform(0.05, 0.18))
+                # Pre-click hover delay
+                hover_t = rng.uniform(_hover_min, _hover_max)
+                time.sleep(hover_t)
                 adb_tap(serial, tx, ty)
                 click_count += 1
                 time.sleep(rng.uniform(0.8, 2.0))
@@ -708,6 +760,8 @@ def browse_session(
             tgt = rng.choice(elements)
             tx, ty = tgt["x"], tgt["y"]
             alog.record(action="double_tap", type=tgt["type"], x=tx, y=ty)
+            # Pre-click hover delay
+            time.sleep(rng.uniform(_hover_min, _hover_max))
             adb_tap(serial, tx, ty)
             time.sleep(rng.uniform(0.07, 0.15))
             adb_tap(serial, tx + rng.randint(-3, 3), ty + rng.randint(-3, 3))
@@ -721,6 +775,8 @@ def browse_session(
             tx, ty = tgt["x"], tgt["y"]
             hold = rng.randint(500, 1200)
             alog.record(action="long_press", type=tgt["type"], x=tx, y=ty, hold_ms=hold)
+            # Pre-click hover delay
+            time.sleep(rng.uniform(_hover_min, _hover_max))
             adb_swipe(serial, tx, ty, tx, ty, hold)
             time.sleep(rng.uniform(0.4, 1.0))
             try_close_overlay(serial, cdp, chrome_top, SAFE_TOP, SAFE_BOT,
@@ -732,7 +788,8 @@ def browse_session(
             tx = max(8, min(vw - 8, tgt["x"] + rng.randint(-15, 15)))
             ty = max(SAFE_TOP + 5, min(SAFE_BOT - 5, tgt["y"] + rng.randint(-10, 10)))
             alog.record(action="mis_tap", type=tgt["type"], x=tx, y=ty)
-            time.sleep(rng.uniform(0.04, 0.15))
+            # Pre-click hover delay (shorter for misclick)
+            time.sleep(rng.uniform(0.05, _hover_min))
             adb_tap(serial, tx, ty)
             time.sleep(rng.uniform(0.4, 1.0))
             try_close_overlay(serial, cdp, chrome_top, SAFE_TOP, SAFE_BOT,

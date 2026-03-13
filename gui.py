@@ -1,9 +1,9 @@
-import sys, os, subprocess, shutil, json, time, ctypes
+import sys, os, subprocess, shutil, json, time, ctypes, threading
 from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout,
     QTableWidget, QTableWidgetItem, QHBoxLayout,
     QStackedWidget, QLabel, QLineEdit, QTextEdit, QGroupBox, QComboBox,
-    QSpinBox, QDialog, QDialogButtonBox, QFormLayout,
+    QSpinBox, QDialog, QDialogButtonBox, QFormLayout, QScrollArea,
 )
 from PySide6.QtCore import QTimer, QThread, Signal, Qt, QPoint, QEvent
 from PySide6.QtGui import QIcon, QCloseEvent, QCursor
@@ -44,11 +44,13 @@ class Worker(QThread):
         self.table_data = table_data
         self.settings = settings or {}
         self._stop_flag = False
+        self._stop_event = threading.Event()
         # Optional callable: () -> dict, used when behavior_mode == "randomly_different"
         self._human_settings_fn = self.settings.pop("human_settings_fn", None)
 
     def stop(self):
         self._stop_flag = True
+        self._stop_event.set()
 
     def run(self):
         try:
@@ -204,7 +206,11 @@ class Worker(QThread):
 
                 try:
                     self.progress.emit(f'🤖 Running ads automation on: {serial} → {ads_link}')
-                    result = run_ads_automation(serial, ads_link, human_settings=human)
+                    result = run_ads_automation(
+                        serial, ads_link,
+                        human_settings=human,
+                        stop_event=self._stop_event,
+                    )
                     title = result.get('title', '') if isinstance(result, dict) else str(result)
                     domain = result.get('domain', '') if isinstance(result, dict) else ''
                     ads_info = f"{title} | {domain}" if domain else title
@@ -262,32 +268,6 @@ class ScreenToggleWorker(QThread):
                 self.progress.emit(f'❌ Error screen {label} {serial}: {str(e)}')
         self.finished.emit(f'Screen {label} done: {success}/{len(self.serials)} devices')
 
-# ── scrcpy window finder worker ───────────────────────────────────────────────
-class ScrcpyFinderWorker(QThread):
-    """Poll for a Win32 window with the given title and emit its HWND."""
-    found     = Signal(int)   # HWND as Python int when window appears
-    not_found = Signal()
-
-    def __init__(self, title: str, timeout: float = 6.0):
-        super().__init__()
-        self.title   = title
-        self.timeout = timeout
-
-    def run(self):
-        if os.name != 'nt':
-            self.not_found.emit()
-            return
-        user32   = ctypes.windll.user32
-        deadline = time.time() + self.timeout
-        hwnd     = 0
-        while time.time() < deadline:
-            hwnd = user32.FindWindowW(None, ctypes.c_wchar_p(self.title))
-            if hwnd:
-                self.found.emit(hwnd)
-                return
-            time.sleep(0.12)
-        self.not_found.emit()
-
 # ── Generic single adb command worker ────────────────────────────────────────
 class AdbCommandWorker(QThread):
     """Run one adb command in a background thread and emit stdout."""
@@ -312,49 +292,6 @@ class AdbCommandWorker(QThread):
             self.result.emit((r.stdout or "").strip())
         except Exception as e:
             self.error.emit(str(e))
-
-class PreviewOverlay(QWidget):
-    """Transparent overlay on the preview_container that captures mouse clicks
-    during hunt mode and translates them to device coordinates."""
-    coord_captured = Signal(int, int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._active = False
-        self._device_w = 0
-        self._device_h = 0
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setStyleSheet("background: transparent;")
-        self.raise_()
-
-    def set_active(self, active: bool, device_w: int = 0, device_h: int = 0):
-        self._active = active
-        self._device_w = device_w
-        self._device_h = device_h
-        # Only intercept mouse when hunt is active
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not active)
-        if active:
-            self.setCursor(Qt.CursorShape.CrossCursor)
-        else:
-            self.unsetCursor()
-        self.update()
-
-    def mousePressEvent(self, event):
-        if not self._active:
-            super().mousePressEvent(event)
-            return
-        if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position().toPoint()
-            w = self.width()
-            h = self.height()
-            if w > 0 and h > 0 and self._device_w > 0 and self._device_h > 0:
-                dev_x = round(pos.x() * self._device_w / w)
-                dev_y = round(pos.y() * self._device_h / h)
-            else:
-                dev_x = pos.x()
-                dev_y = pos.y()
-            self.coord_captured.emit(dev_x, dev_y)
 
 class CookieLoaderGUI(QWidget):
     def __init__(self):
@@ -432,9 +369,6 @@ class CookieLoaderGUI(QWidget):
         # Create widgets that are always needed
         self.ads_table = AdsTableWidget(self.data_csv)
         self.ads_table.status_update.connect(self.update_status)
-        # Connect preview signals from table
-        self.ads_table.preview_requested.connect(self._on_table_preview_requested)
-        self.ads_table.preview_closed.connect(self._on_table_preview_closed)
 
         self.settings_widget = SettingsWidget(self.settings_file)
         self.settings_widget.settings_saved.connect(
@@ -450,7 +384,6 @@ class CookieLoaderGUI(QWidget):
         self.info_widget.status_update.connect(self.update_status)
         self.actions_widget = ActionsWidget()
         self.actions_widget.status_update.connect(self.update_status)
-        self.actions_widget.hunt_mode_active.connect(self._on_hunt_mode_changed)
         self.apps_widget = PackageWidget()
         self.apps_widget.status_update.connect(self.update_status)
         self.apps_widget.install_chrome_requested.connect(self.install_chrome_for_all)
@@ -471,50 +404,6 @@ class CookieLoaderGUI(QWidget):
         self.services_widget = ServicesWidget()
         self.services_widget.status_update.connect(self.update_status)
 
-        # Preview panel (hidden by default)
-        self.preview_panel = QWidget()
-        self.preview_panel.setVisible(False)
-        pv_layout = QVBoxLayout()
-        pv_layout.setContentsMargins(4, 4, 4, 4)
-        pv_layout.setSpacing(4)
-        self.preview_panel.setLayout(pv_layout)
-
-        self._preview_title = QLabel("Preview")
-        self._preview_title.setStyleSheet(
-            "font-weight: bold; font-size: 12px; padding: 2px 4px;"
-        )
-        pv_layout.addWidget(self._preview_title)
-
-        # Rotate button row
-        self._rotation_state = 0  # 0 = portrait, 1 = landscape
-        self._rotate_btn = QPushButton("🔄 Rotate")
-        self._rotate_btn.setToolTip("Toggle screen rotation (portrait ↔ landscape)")
-        self._rotate_btn.setStyleSheet(
-            "QPushButton { background-color: #455a64; color: white; font-weight: bold;"
-            " padding: 4px 10px; border-radius: 4px; font-size: 11px; }"
-            "QPushButton:hover { background-color: #37474f; }"
-        )
-        self._rotate_btn.clicked.connect(self._toggle_rotation)
-        pv_layout.addWidget(self._rotate_btn)
-
-        # Placeholder container — used only to measure position for the overlay window
-        self.preview_container = QWidget()
-        self.preview_container.setMinimumSize(300, 500)
-        self.preview_container.setStyleSheet("background: transparent; border: 1px solid #555;")
-        pv_layout.addWidget(self.preview_container, 1)
-
-        # Transparent overlay for hunt-mode coordinate capture
-        self._preview_overlay = PreviewOverlay(self.preview_container)
-        self._preview_overlay.coord_captured.connect(self._on_preview_click_for_hunt)
-        self.preview_container.installEventFilter(self)
-
-        # State for current preview
-        self._current_preview_serial = None
-        self._scrcpy_proc = None
-        self._embed_hwnd = 0          # Win32 HWND of embedded scrcpy window
-        self._reposition_timer = QTimer()
-        self._reposition_timer.setInterval(200)
-        self._reposition_timer.timeout.connect(self._reposition_scrcpy)
 
         # ── Left navigation panel ────────────────────────────────────────
         left_panel = QWidget()
@@ -734,26 +623,14 @@ class CookieLoaderGUI(QWidget):
         self.repeat_combo.setFixedWidth(110)
         self.repeat_combo.currentIndexChanged.connect(self._on_repeat_combo_changed)
 
-        self.view_log_button = QPushButton("📋 View Log")
-        self.view_log_button.setCheckable(True)
-        self.view_log_button.setChecked(True)
-        self.view_log_button.setToolTip("Toggle log panel visibility")
-        self.view_log_button.setStyleSheet(
-            "QPushButton { background-color: #455a64; color: white; font-weight: bold;"
-            " padding: 6px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #37474f; }"
-            "QPushButton:checked { background-color: #1976d2; }"
-            "QPushButton:checked:hover { background-color: #1565c0; }"
-        )
         run_btn_row = QHBoxLayout()
         run_btn_row.addWidget(self.behavior_mode_combo)
         run_btn_row.addWidget(self.repeat_combo)
         run_btn_row.addWidget(self.run_ads_button)
         run_btn_row.addWidget(self.stop_ads_button)
-        run_btn_row.addWidget(self.view_log_button)
         simulator_layout.addLayout(run_btn_row)
 
-        # ── Log section ─────────────────────────────────────────────────
+        # ── Log section (always visible) ──────────────────────────────────
         log_group = QGroupBox("📋 Log")
         log_group.setStyleSheet(
             "QGroupBox {"
@@ -806,11 +683,16 @@ class CookieLoaderGUI(QWidget):
         log_vl.addLayout(clear_log_row)
 
         log_group.setLayout(log_vl)
-        log_group.show()  # visible by default; toggled by View Log button
-        self.view_log_button.toggled.connect(log_group.setVisible)
         simulator_layout.addWidget(log_group)
 
-        self.tab_body.addWidget(simulator_page)
+        # Wrap simulator_page in a QScrollArea for overflow
+        simulator_scroll = QScrollArea()
+        simulator_scroll.setWidgetResizable(True)
+        simulator_scroll.setWidget(simulator_page)
+        simulator_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+        self.tab_body.addWidget(simulator_scroll)
 
         # Page 1 – Proxy      # index 1
         self.tab_body.addWidget(self.proxy_widget)
@@ -843,13 +725,12 @@ class CookieLoaderGUI(QWidget):
 
         layout.addWidget(left_panel)
         layout.addWidget(right_panel, 1)
-        layout.addWidget(self.preview_panel)
 
         frame_vl.addWidget(content_widget, 1)
         self.setLayout(outer)
 
-        # Wire table row selection → update Info / Actions with selected serial
-        self.ads_table.table.itemSelectionChanged.connect(self._on_table_selection_changed)
+        # Wire table row focus → update Dashboard / Actions / Packages / Files / Activities / Services
+        self.ads_table.focused_serial_changed.connect(self._on_focused_serial_changed)
 
         # Auto-load Info when the user switches to the Info tab
         self.tab_body.currentChanged.connect(self._on_tab_changed)
@@ -964,16 +845,13 @@ class CookieLoaderGUI(QWidget):
             self.ads_log.verticalScrollBar().maximum()
         )
 
-    def _on_table_selection_changed(self):
-        """When the user clicks a row, push the serial to Info and Actions widgets."""
-        selected = self.ads_table.table.selectionModel().selectedRows()
-        if not selected:
+    def _on_focused_serial_changed(self, serial: str):
+        """When the user clicks a row, push the serial to focus-based tabs (Dashboard,
+        Actions, Packages, Files, Activities, Services). At most one device at a time."""
+        if not serial:
             return
-        row = selected[0].row()
-        serial_item = self.ads_table.table.item(row, 2)
-        serial = serial_item.text().strip() if serial_item else ""
 
-        # Always keep Info/Actions/Apps in sync
+        # Always keep focus-based tabs in sync
         self.actions_widget.set_device(serial)
         self.info_widget.set_device(serial)
         self.apps_widget.set_device(serial)
@@ -982,7 +860,7 @@ class CookieLoaderGUI(QWidget):
         self.toolbox_widget.set_device(serial)
         self.services_widget.set_device(serial)
 
-        # Only auto-load Info if that tab is currently open
+        # Only auto-load if that tab is currently open
         if self.tab_body.isVisible() and self.tab_body.currentIndex() == 3:
             self.info_widget.load_device(serial)
         elif self.tab_body.isVisible() and self.tab_body.currentIndex() == 5:
@@ -1143,15 +1021,26 @@ class CookieLoaderGUI(QWidget):
 
         self.disable_buttons()
 
-        # Auto-open the log panel when a run starts
-        self.view_log_button.setChecked(True)
-
         # Build per-device (serial → ads_link) mapping
         per_device_links = {row['serial']: ads_links[i] for i, row in enumerate(table_data) if row['serial']}
 
         worker_settings = {"ads_links": per_device_links}
         repeat = getattr(self, "_repeat_count", 1)
         worker_settings["repeat_count"] = repeat
+
+        # Calculate and log estimated completion time
+        num_devices = len(per_device_links)
+        min_dur = human_settings.get("min_duration", 60.0)
+        max_dur = human_settings.get("max_duration", 90.0)
+        avg_dur = (min_dur + max_dur) / 2.0
+        # ~5s for page load + ~5s for modal wait + ~5s for click & landing + avg browse
+        per_device_est = avg_dur + 15.0
+        total_est = per_device_est * num_devices * repeat
+        est_min = int(total_est // 60)
+        est_sec = int(total_est % 60)
+        est_str = f"{est_min}m {est_sec}s" if est_min > 0 else f"{est_sec}s"
+        self._append_log(f"⏱ Estimated completion time: ~{est_str} ({num_devices} device(s) × {repeat} iteration(s) × ~{per_device_est:.0f}s each)")
+
         if behavior_mode == "Same in series":
             worker_settings["human"] = human_settings
             self._append_log(f"▶ Starting run — behavior mode: Same in series | iterations: {repeat}× | links: {len(ads_links)}")
@@ -1209,8 +1098,7 @@ class CookieLoaderGUI(QWidget):
         self._screen_workers.append(w)
 
     def _collect_serials(self):
-        table_data = self.ads_table.get_table_data()
-        return [row['serial'] for row in table_data if row['serial']]
+        return self.ads_table.get_selected_serials()
 
     def open_remote(self):
         """Mở scrcpy cho device đang được chọn, hoặc tất cả nếu không chọn gì."""
@@ -1218,7 +1106,7 @@ class CookieLoaderGUI(QWidget):
         if selected_rows:
             serials = []
             for index in selected_rows:
-                item = self.ads_table.table.item(index.row(), 2)
+                item = self.ads_table.table.item(index.row(), 3)
                 serial = item.text().strip() if item else ""
                 if serial:
                     serials.append(serial)
@@ -1257,255 +1145,12 @@ class CookieLoaderGUI(QWidget):
 
         self.update_status(f'📱 Remote opened for {launched} device(s)')
 
-    def _on_table_preview_requested(self, serial: str):
-        """Called when AdsTable requests a preview for a serial."""
-        self.show_preview(serial)
-
-    def _on_table_preview_closed(self, serial: str):
-        """Called when AdsTable requests closing a preview."""
-        self.close_preview(serial)
-
-    def show_preview(self, serial: str):
-        """Launch scrcpy as a borderless popup overlaid on the preview container."""
-        if not serial:
-            self.update_status('No device serial provided for preview')
-            return
-
-        # Already previewing this exact device – nothing to do
-        if self._current_preview_serial == serial:
-            return
-
-        # Different device already open – close it first (re-enables its button)
-        if self._current_preview_serial:
-            self.close_preview(self._current_preview_serial)
-
-        scrcpy_exe = shutil.which("scrcpy") or r"C:\android-tools\scrcpy-win64-v3.3.4\scrcpy.exe"
-        if not os.path.isfile(scrcpy_exe) and shutil.which("scrcpy") is None:
-            self.update_status('❌ scrcpy not found. Please install scrcpy and add it to PATH.')
-            return
-
-        try:
-            proc = subprocess.Popen(
-                [scrcpy_exe, "-s", serial, "--window-title", serial,
-                 "--window-width", str(self.preview_width),
-                 "--window-height", str(self.preview_height)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            self._scrcpy_proc = proc
-            self._current_preview_serial = serial
-            self.preview_panel.setVisible(True)
-
-            # Disable the Preview button for this device
-            self.ads_table.set_preview_active(serial, True)
-
-            self.update_status(f'📱 Opening preview for: {serial}')
-
-            # On Windows: find the window, strip its title bar, then keep it
-            # positioned as a WS_POPUP overlay – this keeps input working.
-            self._embed_hwnd = 0
-            self._find_and_position_scrcpy(serial)
-
-        except Exception as e:
-            self.update_status(f'❌ Error opening preview for {serial}: {e}')
-
-    def _find_and_position_scrcpy(self, title: str, timeout: float = 6.0):
-        """Launch ScrcpyFinderWorker to poll for the HWND in background.
-        Win32 style stripping and positioning happen on the main thread
-        once the HWND is found, so GUI input is never blocked.
-        """
-        if os.name != 'nt':
-            return
-
-        finder = ScrcpyFinderWorker(title, timeout)
-        # Keep reference so it isn't GC'd before finishing
-        self._scrcpy_finder = finder
-        finder.found.connect(self._apply_scrcpy_style_and_position)
-        finder.not_found.connect(
-            lambda: self.update_status('⚠️ Could not find scrcpy window to position')
-        )
-        finder.not_found.connect(finder.deleteLater)
-        finder.start()
-
-    def _apply_scrcpy_style_and_position(self, hwnd: int):
-        """Strip title bar from the scrcpy window and start position-sync timer.
-        Called on the main thread via signal from ScrcpyFinderWorker.
-        """
-        # Strip title bar / resize border; keep WS_POPUP so input is not broken
-        GWL_STYLE     = -16
-        WS_POPUP      = 0x80000000
-        WS_VISIBLE    = 0x10000000
-        WS_CAPTION    = 0x00C00000   # title bar (WS_BORDER | WS_DLGFRAME)
-        WS_THICKFRAME = 0x00040000   # resize grip
-
-        try:
-            user32 = ctypes.windll.user32
-            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-            style = (style | WS_POPUP | WS_VISIBLE) & ~(WS_CAPTION | WS_THICKFRAME)
-            user32.SetWindowLongW(hwnd, GWL_STYLE, style)
-        except Exception as e:
-            self.update_status(f'⚠️ Could not restyle scrcpy window: {e}')
-
-        self._embed_hwnd = hwnd
-        self._reposition_scrcpy()
-        # Keep syncing position as the main window moves / resizes
-        self._reposition_timer.start()
-        # Clean up finder worker
-        if hasattr(self, '_scrcpy_finder'):
-            self._scrcpy_finder.deleteLater()
-            self._scrcpy_finder = None
-
-    def _reposition_scrcpy(self):
-        """Move/resize the scrcpy popup to exactly cover preview_container."""
-        if not self._embed_hwnd or os.name != 'nt':
-            return
-
-        # If scrcpy exited, auto-close
-        if self._scrcpy_proc and self._scrcpy_proc.poll() is not None:
-            self._reposition_timer.stop()
-            self.close_preview()
-            return
-
-        try:
-            user32 = ctypes.windll.user32
-            pos = self.preview_container.mapToGlobal(
-                self.preview_container.rect().topLeft()
-            )
-            x, y = pos.x(), pos.y()
-            w = self.preview_container.width()
-            h = self.preview_container.height()
-
-            SWP_NOZORDER   = 0x0004
-            SWP_SHOWWINDOW = 0x0040
-            SWP_NOACTIVATE = 0x0010
-            user32.SetWindowPos(
-                self._embed_hwnd, 0,
-                int(x), int(y), int(w), int(h),
-                SWP_NOZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE,
-            )
-        except Exception:
-            pass
-
-    def close_preview(self, serial: str = None):
-        """Terminate scrcpy, re-enable table button, hide panel, restore window width."""
-        self._reposition_timer.stop()
-        self._embed_hwnd = 0
-
-        try:
-            if self._scrcpy_proc and self._scrcpy_proc.poll() is None:
-                self._scrcpy_proc.terminate()
-        except Exception:
-            pass
-
-        closed_serial = self._current_preview_serial
-        self._scrcpy_proc = None
-        self._current_preview_serial = None
-        self._rotation_state = 0
-        self._rotate_btn.setText("🔄 Rotate")
-
-        # Re-enable the Preview button for the closed device
-        if closed_serial:
-            self.ads_table.set_preview_active(closed_serial, False)
-
-        self.preview_panel.setVisible(False)
-
-        # Let the window shrink back to its natural size
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(16_777_215)
-        QTimer.singleShot(0, self.adjustSize)
-
-        self.update_status('Preview closed')
-
-    def eventFilter(self, obj, event):
-        from PySide6.QtCore import QEvent
-        if obj is self.preview_container and event.type() == QEvent.Type.Resize:
-            self._preview_overlay.setGeometry(self.preview_container.rect())
-            self._preview_overlay.raise_()
-        return super().eventFilter(obj, event)
-
-    def _toggle_rotation(self):
-        """Toggle screen rotation between portrait (0) and landscape (1)."""
-        if not self._current_preview_serial:
-            self.update_status("⚠ No device in preview to rotate")
-            return
-        self._rotation_state = 1 - self._rotation_state
-        rot_val = str(self._rotation_state)
-        label   = "landscape 🌄" if self._rotation_state == 1 else "portrait 📱"
-        serial  = self._current_preview_serial
-        # Update button label immediately for responsive feel
-        self._rotate_btn.setText("🔄 Portrait 📱" if self._rotation_state == 0 else "🔄 Landscape 🌄")
-        self.update_status(f"🔄 Rotating to {label}: {serial}…")
-
-        rot_worker = AdbCommandWorker(
-            serial, "shell", "settings", "put", "system", "user_rotation", rot_val,
-            timeout=5,
-        )
-        # Capture loop variables in default args to avoid closure issues
-        rot_worker.result.connect(
-            lambda _, s=serial, l=label:
-                self.update_status(f"🔄 Rotated to {l}: {s}")
-        )
-        rot_worker.error.connect(
-            lambda e: self.update_status(f"❌ Rotate failed: {e}")
-        )
-        rot_worker.finished.connect(rot_worker.deleteLater)
-        rot_worker.start()
-        self._rot_worker = rot_worker   # keep reference until done
-
-    def _on_hunt_mode_changed(self, active: bool):
-        """Show/hide the transparent overlay on the preview container for hunt mode."""
-        # Always update overlay geometry and active state immediately
-        self._preview_overlay.setGeometry(self.preview_container.rect())
-        self._preview_overlay.raise_()
-        if active and not self.preview_panel.isVisible():
-            self.update_status("⚠ Open the phone preview first, then tap on it")
-
-        if not active or not self._current_preview_serial:
-            # Disable overlay right away (no resolution needed)
-            self._preview_overlay.set_active(False)
-            return
-
-        # Activate overlay with 0 dimensions first (falls back to widget coords)
-        self._preview_overlay.set_active(True, 0, 0)
-
-        # Fetch device resolution in background to refine coordinate mapping
-        serial = self._current_preview_serial
-        res_worker = AdbCommandWorker(serial, "shell", "wm", "size", timeout=5)
-
-        def _on_resolution(stdout: str):
-            import re as _re
-            m = _re.search(r"(\d+)x(\d+)", stdout)
-            if m and self._current_preview_serial == serial:
-                dev_w, dev_h = int(m.group(1)), int(m.group(2))
-                self._preview_overlay.set_active(True, dev_w, dev_h)
-
-        res_worker.result.connect(_on_resolution)
-        res_worker.finished.connect(res_worker.deleteLater)
-        res_worker.start()
-        self._res_worker = res_worker   # keep reference until done
-
-    def _on_preview_click_for_hunt(self, dev_x: int, dev_y: int):
-        """Forward a preview-window click as a hunt coordinate to the actions widget."""
-        self.actions_widget.receive_preview_click(dev_x, dev_y)
-
     def changeEvent(self, event):
-        """Sync scrcpy window visibility with app minimize/restore state."""
-        if event.type() == QEvent.Type.WindowStateChange and self._embed_hwnd and os.name == 'nt':
-            user32 = ctypes.windll.user32
-            SW_HIDE    = 0
-            SW_SHOW    = 5
-            if self.isMinimized():
-                user32.ShowWindow(self._embed_hwnd, SW_HIDE)
-            else:
-                user32.ShowWindow(self._embed_hwnd, SW_SHOW)
-                self._reposition_scrcpy()
+        """Handle window state changes."""
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        """Ensure scrcpy preview is closed when the app is closing."""
-        if self._current_preview_serial:
-            self.close_preview()
+        """Handle app close."""
         event.accept()
 
 if __name__ == '__main__':

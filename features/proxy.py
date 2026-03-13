@@ -416,7 +416,7 @@ class ProxyWidget(QWidget):
         port_group = QGroupBox("🔀 Port Forward / Reverse")
         port_group.setStyleSheet(_PORT_GROUP_SS)
         port_vl = QVBoxLayout()
-        port_vl.setContentsMargins(10, 10, 10, 100)
+        port_vl.setContentsMargins(4, 4, 4, 0)
         port_vl.setSpacing(10)
 
         # ── Two columns: Forward | Reverse ────────────────────────────────

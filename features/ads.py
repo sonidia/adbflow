@@ -1,4 +1,4 @@
-import time, random, logging
+import time, random, logging, threading
 from urllib.parse import urlparse
 from utils.cdp_chrome import ChromeCDP
 from utils.cdp_helpers import InputDriver, get_webpage_safe_zone
@@ -10,6 +10,7 @@ def run_ads_automation(
     serial: str,
     url: str,
     human_settings: dict = None,
+    stop_event: threading.Event = None,
 ):
     """
     Flow:
@@ -22,16 +23,22 @@ def run_ads_automation(
     Args:
         serial: ADB serial của device
         url: link ads ban đầu (ô Ads Link)
+        stop_event: optional threading.Event; when set, abort immediately
 
     Raises:
         RuntimeError: nếu Chrome không chạy hoặc lỗi kết nối
     """
+
+    def _check_stop():
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("⏹ Stopped by user")
 
     with ChromeCDP(serial=serial, initial_url=url) as cdp:
 
         # ── Bước 1: Đợi trang ads load ──────────────────────────────────
         print(f"⏳ Waiting for ads page to load on {serial}...")
         time.sleep(5)
+        _check_stop()
 
         # ── Bước 2: Đợi modal "Link to ad" xuất hiện (không giới hạn thời gian) ──
         print(f"⏳ Waiting for 'Link to ad' modal on {serial}...")
@@ -39,6 +46,7 @@ def run_ads_automation(
         elapsed = 0
         poll_interval = 2  # kiểm tra mỗi 2 giây
         while True:
+            _check_stop()
             time.sleep(poll_interval)
             elapsed += poll_interval
             check_modal = cdp.execute_js("""
@@ -126,6 +134,7 @@ def run_ads_automation(
 
                 # ── Bước 5: Đợi trang đích load ─────────────────────────
                 time.sleep(5)
+                _check_stop()
                 page_title = cdp.get_page_title()
                 page_url = cdp.get_current_url()
                 domain = urlparse(page_url).netloc if page_url else ""
@@ -149,7 +158,20 @@ def run_ads_automation(
                                swipe_speed_max_ms=hs.get("swipe_speed_max_ms", None),
                                overshoot_prob=hs.get("overshoot_prob", None),
                                scroll_style_weights=hs.get("scroll_style_weights", None),
-                               profile=hs.get("profile", None))
+                               profile=hs.get("profile", None),
+                               stop_event=stop_event,
+                               scroll_up_chance=hs.get("scroll_up_chance", None),
+                               idle_chance=hs.get("idle_chance", None),
+                               idle_duration_min=hs.get("idle_duration_min", None),
+                               idle_duration_max=hs.get("idle_duration_max", None),
+                               pre_click_hover_min=hs.get("pre_click_hover_min", None),
+                               pre_click_hover_max=hs.get("pre_click_hover_max", None),
+                               misclick_chance=hs.get("misclick_chance", None),
+                               tab_inactive_chance=hs.get("tab_inactive_chance", None),
+                               tab_inactive_min=hs.get("tab_inactive_min", None),
+                               tab_inactive_max=hs.get("tab_inactive_max", None),
+                               page_settle_min=hs.get("page_settle_min", None),
+                               page_settle_max=hs.get("page_settle_max", None))
 
                 # Nghỉ cuối phiên
                 time.sleep(random.uniform(2.0, 4.0))
@@ -170,10 +192,9 @@ def run_ads_automation(
 
 # GUI Components for Ads Management
 import sys, os, subprocess, shutil, json
-from functools import partial
-from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QTableWidget, QTableWidgetItem, QHBoxLayout, QDialog, QLineEdit, QLabel, QDialogButtonBox, QFormLayout, QStyledItemDelegate, QTextEdit, QSizePolicy, QGroupBox, QDoubleSpinBox, QSpinBox, QSlider, QFrame, QComboBox, QGridLayout
-from PySide6.QtCore import QTimer, QThread, Signal, Qt, QRect
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QTableWidget, QTableWidgetItem, QHBoxLayout, QDialog, QLineEdit, QLabel, QDialogButtonBox, QFormLayout, QStyledItemDelegate, QTextEdit, QSizePolicy, QGroupBox, QDoubleSpinBox, QSpinBox, QSlider, QFrame, QComboBox, QGridLayout, QHeaderView
+from PySide6.QtCore import QTimer, QThread, Signal, Qt, QRect, QModelIndex
+from PySide6.QtGui import QIcon, QPainter, QBrush, QColor, QPen
 
 _ANDROID_TOOLS_PATHS = [
     r"C:\android-tools\platform-tools",
@@ -296,12 +317,66 @@ class AdsLinkWidget(QWidget):
         self.start_inline_edit()
         event.accept()
 
+class CheckboxHeader(QHeaderView):
+    """Header view that draws a tristate checkbox in section 0 for select-all."""
+    checkStateChanged = Signal(Qt.CheckState)
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._check_state = Qt.CheckState.Unchecked
+        self.setSectionsClickable(True)
+        self.sectionClicked.connect(self._on_section_clicked)
+
+    def set_check_state(self, state: Qt.CheckState):
+        """Update the rendered state without emitting the signal."""
+        self._check_state = state
+        self.viewport().update()
+
+    def _on_section_clicked(self, logical_index: int):
+        if logical_index != 0:
+            return
+        # Toggle between Checked and Unchecked
+        if self._check_state == Qt.CheckState.Checked:
+            self._check_state = Qt.CheckState.Unchecked
+        else:
+            self._check_state = Qt.CheckState.Checked
+        self.viewport().update()
+        self.checkStateChanged.emit(self._check_state)
+
+    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int):
+        painter.save()
+        super().paintSection(painter, rect, logical_index)
+        painter.restore()
+        if logical_index == 0:
+            # Draw a checkbox centred in the header cell
+            cb_size = 14
+            cx = rect.left() + (rect.width() - cb_size) // 2
+            cy = rect.top() + (rect.height() - cb_size) // 2
+            cb_rect = QRect(cx, cy, cb_size, cb_size)
+            opt = self.style().standardPalette()
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor("#9e9e9e"), 1))
+            painter.setBrush(QBrush(QColor("#ffffff")))
+            painter.drawRoundedRect(cb_rect, 2, 2)
+
+            if self._check_state == Qt.CheckState.Checked:
+                painter.setPen(QPen(QColor("#1976d2"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                # Draw a checkmark
+                painter.drawLine(cx + 2, cy + cb_size // 2, cx + cb_size // 2 - 1, cy + cb_size - 3)
+                painter.drawLine(cx + cb_size // 2 - 1, cy + cb_size - 3, cx + cb_size - 2, cy + 2)
+            elif self._check_state == Qt.CheckState.PartiallyChecked:
+                painter.setPen(QPen(QColor("#1976d2"), 2))
+                painter.drawLine(cx + 3, cy + cb_size // 2, cx + cb_size - 3, cy + cb_size // 2)
+            painter.restore()
+
+
 class AdsTableWidget(QWidget):
     """Widget containing the ads table with device management functionality."""
 
     status_update = Signal(str)
-    preview_requested = Signal(str)   # emitted when user clicks Preview button (serial)
-    preview_closed = Signal(str)      # emitted when user clicks Close button (serial)
+    focused_serial_changed = Signal(str)  # emitted when a row is clicked (single focus)
 
     def __init__(self, data_csv="data/data.csv", parent=None):
         super().__init__(parent)
@@ -313,22 +388,37 @@ class AdsTableWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
+        # ── Selection count label (compact row above table) ───────────────
+        select_row = QHBoxLayout()
+        select_row.setContentsMargins(0, 2, 0, 2)
+        select_row.setSpacing(4)
+        self._select_count_label = QLabel("0 selected")
+        self._select_count_label.setStyleSheet("font-size: 11px; color: #757575;")
+        select_row.addWidget(self._select_count_label)
+        select_row.addStretch()
+        layout.addLayout(select_row)
+
         self.table = QTableWidget()
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(['No', 'Device Name', 'Serial', 'Proxy Type', 'Host:Port', 'Preview'])
+        self.table.setHorizontalHeaderLabels(['', 'No', 'Device Name', 'Serial', 'Proxy Type', 'Host:Port'])
         self.table.verticalHeader().hide()
-        hh = self.table.horizontalHeader()
+
+        # ── Custom header with checkbox in col 0 ─────────────────────────
+        self._header = CheckboxHeader(Qt.Orientation.Horizontal, self.table)
+        self.table.setHorizontalHeader(self._header)
+        self._header.checkStateChanged.connect(self._on_header_checkbox_changed)
+
+        hh = self._header
         hh.setStretchLastSection(False)
-        from PySide6.QtWidgets import QHeaderView
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)           # No
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)         # Device Name – takes remaining space
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents) # Serial
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) # Proxy Type
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents) # Host:Port
-        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)           # Actions
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)           # Checkbox
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)           # No
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)         # Device Name
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents) # Serial
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents) # Proxy Type
+        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents) # Host:Port
         self.table.itemChanged.connect(self.on_table_item_changed)
         self.table.itemSelectionChanged.connect(self.on_selection_changed)
         self.table.mousePressEvent = self.table_mouse_press_event
@@ -337,7 +427,7 @@ class AdsTableWidget(QWidget):
 
         # Dùng delegate riêng cho cột Device Name để editor không bị tràn ra ngoài ô
         self._device_name_delegate = SerialDelegate(self.table)
-        self.table.setItemDelegateForColumn(1, self._device_name_delegate)
+        self.table.setItemDelegateForColumn(2, self._device_name_delegate)
 
         # Remove cell hover effect but keep row selection, make header text bolder
         self.table.setStyleSheet("""
@@ -681,11 +771,64 @@ class AdsTableWidget(QWidget):
             _hrow(_row_label("Profile:"), self._hs_profile),
         ])
 
+        # ── Cell (2, 0-1) spanning: 🧠 Advanced Behavior ──────────────────
+        # Scroll-up chance
+        self._hs_scroll_up       = _slider(self, "_hs_scroll_up", 0, 40, 18, "Scroll-up probability (%)")
+        self._hs_scroll_up_label = _value_label("18%", 36)
+        self._hs_scroll_up.valueChanged.connect(lambda v: self._hs_scroll_up_label.setText(f"{v}%"))
+
+        # Idle chance + duration
+        self._hs_idle_chance       = _slider(self, "_hs_idle_chance", 0, 30, 12, "Random idle pause probability (%)")
+        self._hs_idle_chance_label = _value_label("12%", 36)
+        self._hs_idle_chance.valueChanged.connect(lambda v: self._hs_idle_chance_label.setText(f"{v}%"))
+        self._hs_idle_min = _dspin(self, "_hs_idle_min", 1.0, 30.0, 3.0, "s", tip="Min idle pause duration")
+        self._hs_idle_max = _dspin(self, "_hs_idle_max", 1.0, 60.0, 10.0, "s", tip="Max idle pause duration")
+
+        # Pre-click hover delay
+        self._hs_hover_min = _dspin(self, "_hs_hover_min", 0.05, 3.0, 0.35, "s", tip="Min hover delay before click")
+        self._hs_hover_max = _dspin(self, "_hs_hover_max", 0.1, 5.0, 1.4, "s", tip="Max hover delay before click")
+
+        # Misclick chance
+        self._hs_misclick       = _slider(self, "_hs_misclick", 0, 10, 2, "Misclick probability (%)")
+        self._hs_misclick_label = _value_label("2%", 36)
+        self._hs_misclick.valueChanged.connect(lambda v: self._hs_misclick_label.setText(f"{v}%"))
+
+        # Tab inactive
+        self._hs_tab_inactive       = _slider(self, "_hs_tab_inactive", 0, 20, 0, "Tab-inactive simulation probability (%)")
+        self._hs_tab_inactive_label = _value_label("0%", 36)
+        self._hs_tab_inactive.valueChanged.connect(lambda v: self._hs_tab_inactive_label.setText(f"{v}%"))
+        self._hs_tab_min = _dspin(self, "_hs_tab_min", 1.0, 30.0, 4.0, "s", tip="Min tab-inactive duration")
+        self._hs_tab_max = _dspin(self, "_hs_tab_max", 2.0, 60.0, 18.0, "s", tip="Max tab-inactive duration")
+
+        # Page settle delay
+        self._hs_settle_min = _dspin(self, "_hs_settle_min", 0.5, 10.0, 1.5, "s", tip="Min settle delay after navigation")
+        self._hs_settle_max = _dspin(self, "_hs_settle_max", 1.0, 15.0, 4.0, "s", tip="Max settle delay after navigation")
+
+        def _adv_row(label_text, *widgets):
+            row = QHBoxLayout(); row.setSpacing(6); row.setContentsMargins(0,0,0,0)
+            row.addWidget(_row_label(label_text))
+            for w in widgets: row.addWidget(w)
+            row.addStretch()
+            return row
+
+        c20 = _cell_widget([
+            _header("🧠 Advanced Behavior"),
+            _adv_row("Scroll up %:",  self._hs_scroll_up, self._hs_scroll_up_label),
+            _adv_row("Idle %:",       self._hs_idle_chance, self._hs_idle_chance_label,
+                     QLabel("–"), self._hs_idle_min, QLabel("-"), self._hs_idle_max),
+            _adv_row("Hover delay:",  self._hs_hover_min, QLabel("-"), self._hs_hover_max),
+            _adv_row("Misclick %:",   self._hs_misclick, self._hs_misclick_label),
+            _adv_row("Tab inactive:", self._hs_tab_inactive, self._hs_tab_inactive_label,
+                     QLabel("–"), self._hs_tab_min, QLabel("-"), self._hs_tab_max),
+            _adv_row("Page settle:",  self._hs_settle_min, QLabel("-"), self._hs_settle_max),
+        ])
+
         # Place cells with equal stretch so all 4 have same height
         grid.addWidget(c00, 0, 0)
         grid.addWidget(c01, 0, 1)
         grid.addWidget(c10, 1, 0)
         grid.addWidget(c11, 1, 1)
+        grid.addWidget(c20, 2, 0, 1, 2)  # spans both columns
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         grid.setHorizontalSpacing(10)
@@ -737,6 +880,19 @@ class AdsTableWidget(QWidget):
             "swipe_speed_max_ms":   speed_max,
             "scroll_style_weights": self._STYLE_MAP.get(style_label),
             "profile":              self._PROFILE_MAP.get(profile_label),
+            # ── Advanced behavior ────────────────────────────────
+            "scroll_up_chance":     self._hs_scroll_up.value() / 100.0,
+            "idle_chance":          self._hs_idle_chance.value() / 100.0,
+            "idle_duration_min":    self._hs_idle_min.value(),
+            "idle_duration_max":    self._hs_idle_max.value(),
+            "pre_click_hover_min":  self._hs_hover_min.value(),
+            "pre_click_hover_max":  self._hs_hover_max.value(),
+            "misclick_chance":      self._hs_misclick.value() / 100.0,
+            "tab_inactive_chance":  self._hs_tab_inactive.value() / 100.0,
+            "tab_inactive_min":     self._hs_tab_min.value(),
+            "tab_inactive_max":     self._hs_tab_max.value(),
+            "page_settle_min":      self._hs_settle_min.value(),
+            "page_settle_max":      self._hs_settle_max.value(),
         }
 
     def get_randomized_human_settings(self) -> dict:
@@ -804,6 +960,19 @@ class AdsTableWidget(QWidget):
             "swipe_speed_max_ms":   speed_max_r,
             "scroll_style_weights": self._STYLE_MAP.get(style_label),
             "profile":              self._PROFILE_MAP.get(profile_label),
+            # ── Advanced behavior ── randomized within slider maximums
+            "scroll_up_chance":     _rnd.uniform(0, self._hs_scroll_up.value() / 100.0),
+            "idle_chance":          _rnd.uniform(0, self._hs_idle_chance.value() / 100.0),
+            "idle_duration_min":    _rnd.uniform(self._hs_idle_min.value(), self._hs_idle_max.value()),
+            "idle_duration_max":    self._hs_idle_max.value(),
+            "pre_click_hover_min":  _rnd.uniform(self._hs_hover_min.value(), self._hs_hover_max.value()),
+            "pre_click_hover_max":  self._hs_hover_max.value(),
+            "misclick_chance":      _rnd.uniform(0, self._hs_misclick.value() / 100.0),
+            "tab_inactive_chance":  _rnd.uniform(0, max(0.01, self._hs_tab_inactive.value() / 100.0)),
+            "tab_inactive_min":     self._hs_tab_min.value(),
+            "tab_inactive_max":     self._hs_tab_max.value(),
+            "page_settle_min":      _rnd.uniform(self._hs_settle_min.value(), self._hs_settle_max.value()),
+            "page_settle_max":      self._hs_settle_max.value(),
         }
         try:
             out = subprocess.check_output(
@@ -847,6 +1016,7 @@ class AdsTableWidget(QWidget):
             num_rows = len(rows)
             if num_rows == 0:
                 self.table.setRowCount(0)
+                self._update_select_count()
                 self.status_update.emit('No data in CSV found')
                 return
 
@@ -856,57 +1026,45 @@ class AdsTableWidget(QWidget):
 
             non_editable = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
             editable = non_editable | Qt.ItemFlag.ItemIsEditable
+            checkable = Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
 
             for row_idx in range(num_rows):
                 model = rows[row_idx][0] if len(rows[row_idx]) > 0 else ""
                 serial = rows[row_idx][1] if len(rows[row_idx]) > 1 else ""
                 device_name = rows[row_idx][2] if len(rows[row_idx]) > 2 else ""
 
-                # col 0 – # (row number, read-only)
+                # col 0 – Checkbox
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(checkable)
+                chk_item.setCheckState(Qt.CheckState.Unchecked)
+                self.table.setItem(row_idx, 0, chk_item)
+
+                # col 1 – # (row number, read-only)
                 num_item = QTableWidgetItem(str(row_idx + 1))
                 num_item.setFlags(non_editable)
                 num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(row_idx, 0, num_item)
+                self.table.setItem(row_idx, 1, num_item)
 
                 device_name_item = QTableWidgetItem(device_name)
                 device_name_item.setFlags(editable)
-                self.table.setItem(row_idx, 1, device_name_item)
+                self.table.setItem(row_idx, 2, device_name_item)
 
                 serial_item = QTableWidgetItem(serial)
                 serial_item.setFlags(non_editable)
-                self.table.setItem(row_idx, 2, serial_item)
+                self.table.setItem(row_idx, 3, serial_item)
 
                 # Proxy cols — placeholder until updated externally
-                for col in (3, 4):
+                for col in (4, 5):
                     ph = QTableWidgetItem("—")
                     ph.setFlags(non_editable)
                     ph.setForeground(Qt.GlobalColor.gray)
                     self.table.setItem(row_idx, col, ph)
 
-                # Preview column: contains Preview and Close buttons
-                preview_widget = QWidget()
-                ph_layout = QHBoxLayout(preview_widget)
-                ph_layout.setContentsMargins(2, 2, 2, 2)
-                ph_layout.setSpacing(4)
-                open_btn = QPushButton("Open")
-                open_btn.setFixedSize(64, 24)
-                close_btn = QPushButton("Close")
-                close_btn.setFixedSize(48, 24)
-                close_btn.setVisible(False)  # hidden until preview is open
-
-                # Connect buttons — use partial to capture serial
-                open_btn.clicked.connect(partial(self._on_preview_clicked, serial))
-                close_btn.clicked.connect(partial(self._on_close_preview_clicked, serial))
-
-                ph_layout.addWidget(open_btn)
-                ph_layout.addWidget(close_btn)
-                ph_layout.addStretch()
-                self.table.setCellWidget(row_idx, 5, preview_widget)
-
-            self.table.setColumnWidth(0, 36)   # No
-            self.table.setColumnWidth(5, 140)  # Actions (Preview + Close buttons)
+            self.table.setColumnWidth(0, 32)   # Checkbox
+            self.table.setColumnWidth(1, 36)   # No
             self.table.blockSignals(False)
 
+            self._update_select_count()
             self.status_update.emit(f'Loaded {len(rows)} rows from CSV')
 
         except Exception as e:
@@ -944,14 +1102,32 @@ class AdsTableWidget(QWidget):
         pass
 
     def on_selection_changed(self):
-        """Clear focus when selection changes."""
+        """Emit focused_serial_changed when selected row changes (single focus)."""
         self.table.clearFocus()
+        selected = self.table.selectionModel().selectedRows()
+        if selected:
+            row = selected[0].row()
+            serial_item = self.table.item(row, 3)
+            serial = serial_item.text().strip() if serial_item else ""
+            self.focused_serial_changed.emit(serial)
+        else:
+            self.focused_serial_changed.emit("")
 
     def table_mouse_press_event(self, event):
-        """Handle mouse press to clear focus before normal processing."""
-        # Clear focus first
+        """Handle mouse press: toggle checkbox if clicking col-0, else normal row focus."""
+        index = self.table.indexAt(event.pos())
+        if index.isValid() and index.column() == 0:
+            # Toggle checkbox for this row
+            chk = self.table.item(index.row(), 0)
+            if chk:
+                new_state = (
+                    Qt.CheckState.Unchecked
+                    if chk.checkState() == Qt.CheckState.Checked
+                    else Qt.CheckState.Checked
+                )
+                chk.setCheckState(new_state)
+            return  # don't propagate (avoids row-selection change)
         self.table.clearFocus()
-        self.table.setCurrentItem(None)
         # Then call the original mouse press event
         QTableWidget.mousePressEvent(self.table, event)
 
@@ -970,7 +1146,7 @@ class AdsTableWidget(QWidget):
             row = index.row()
             col = index.column()
 
-            if col == 1:  # Device Name column
+            if col == 2:  # Device Name column (shifted by checkbox col)
                 item = self.table.item(row, col)
                 if item:
                     self.table.editItem(item)
@@ -978,8 +1154,12 @@ class AdsTableWidget(QWidget):
         QTableWidget.mouseDoubleClickEvent(self.table, event)
 
     def on_table_item_changed(self, item):
-        """Lưu CSV khi user chỉnh sửa ô Device Name (cột 1)."""
-        if item.column() != 1:
+        """Lưu CSV khi user chỉnh sửa ô Device Name (cột 2), hoặc update count khi checkbox thay đổi."""
+        if item.column() == 0:
+            # Checkbox changed — update select count
+            self._update_select_count()
+            return
+        if item.column() != 2:
             return
         self.save_csv_changes()
 
@@ -988,8 +1168,8 @@ class AdsTableWidget(QWidget):
         try:
             rows = []
             for row_idx in range(self.table.rowCount()):
-                device_name = self.table.item(row_idx, 1)
-                serial = self.table.item(row_idx, 2)
+                device_name = self.table.item(row_idx, 2)
+                serial = self.table.item(row_idx, 3)
                 rows.append([
                     "",  # model column kept empty for CSV compatibility
                     serial.text() if serial else "",
@@ -999,50 +1179,16 @@ class AdsTableWidget(QWidget):
         except Exception as e:
             print(f"Error saving CSV: {e}")
 
-    # Preview button callbacks
-    def _on_preview_clicked(self, serial: str):
-        try:
-            self.preview_requested.emit(serial)
-        except Exception:
-            pass
 
-    def _on_close_preview_clicked(self, serial: str):
-        try:
-            self.preview_closed.emit(serial)
-        except Exception:
-            pass
-
-    def set_preview_active(self, serial: str, active: bool):
-        """Enable or disable the Preview button for the row matching `serial`.
-        When active=True the Preview button is disabled (greyed out) and the
-        Close button becomes visible. When active=False the Preview button is
-        re-enabled and the Close button is hidden.
-        """
-        for row in range(self.table.rowCount()):
-            serial_item = self.table.item(row, 2)
-            if serial_item and serial_item.text().strip() == serial:
-                cell_w = self.table.cellWidget(row, 5)
-                if cell_w:
-                    btns = cell_w.findChildren(QPushButton)
-                    if len(btns) >= 1:
-                        # btns[0] = Open (Preview), btns[1] = Close
-                        btns[0].setEnabled(not active)
-                        btns[0].setStyleSheet(
-                            "QPushButton { background: #bbb; color: #777; border-radius:3px; font-size:11px; }"
-                            if active else ""
-                        )
-                    if len(btns) >= 2:
-                        btns[1].setVisible(active)
-                break
 
     def update_proxy_statuses(self, proxy_data: dict):
-        """Update proxy status columns (3, 4) keyed by serial.
+        """Update proxy status columns (4, 5) keyed by serial.
         proxy_data = { serial: {"type": str, "host_port": str} }
         """
         non_editable = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
         self.table.blockSignals(True)
         for row_idx in range(self.table.rowCount()):
-            serial_item = self.table.item(row_idx, 2)
+            serial_item = self.table.item(row_idx, 3)
             serial = serial_item.text() if serial_item else ""
             info = proxy_data.get(serial, {})
             ptype = info.get("type", "—")
@@ -1060,19 +1206,61 @@ class AdsTableWidget(QWidget):
                 t_item.setForeground(Qt.GlobalColor.gray)
                 h_item.setForeground(Qt.GlobalColor.gray)
 
-            self.table.setItem(row_idx, 3, t_item)
-            self.table.setItem(row_idx, 4, h_item)
+            self.table.setItem(row_idx, 4, t_item)
+            self.table.setItem(row_idx, 5, h_item)
         self.table.blockSignals(False)
 
     def get_table_data(self):
-        """Get table data for worker operations."""
-        table_data = []
+        """Get table data for worker operations.
+        If any devices are checked, returns only checked devices.
+        If none are checked, returns all devices (backward compatible).
+        """
+        checked = []
+        all_data = []
         row_count = self.table.rowCount()
         for row in range(row_count):
-            serial_item = self.table.item(row, 2)
+            serial_item = self.table.item(row, 3)
             serial = serial_item.text() if serial_item else ""
-            table_data.append({'serial': serial, 'row_index': row})
-        return table_data
+            entry = {'serial': serial, 'row_index': row}
+            all_data.append(entry)
+            chk = self.table.item(row, 0)
+            if chk and chk.checkState() == Qt.CheckState.Checked:
+                checked.append(entry)
+        return checked if checked else all_data
+
+    def get_selected_serials(self):
+        """Return list of serials for checked devices only.
+        If none checked, returns all serials.
+        """
+        return [d['serial'] for d in self.get_table_data() if d['serial']]
+
+    def _on_header_checkbox_changed(self, state: Qt.CheckState):
+        """Check/uncheck all device checkboxes when header checkbox is clicked."""
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            chk = self.table.item(row, 0)
+            if chk:
+                chk.setCheckState(state)
+        self.table.blockSignals(False)
+        self._update_select_count()
+
+    def _update_select_count(self):
+        """Update the selected count label and sync header checkbox state."""
+        count = 0
+        total = self.table.rowCount()
+        for row in range(total):
+            chk = self.table.item(row, 0)
+            if chk and chk.checkState() == Qt.CheckState.Checked:
+                count += 1
+        if count == 0:
+            self._select_count_label.setText(f"All {total} devices (none selected)")
+            self._header.set_check_state(Qt.CheckState.Unchecked)
+        elif count == total:
+            self._select_count_label.setText(f"{count}/{total} selected")
+            self._header.set_check_state(Qt.CheckState.Checked)
+        else:
+            self._select_count_label.setText(f"{count}/{total} selected")
+            self._header.set_check_state(Qt.CheckState.PartiallyChecked)
 
     def get_devices_with_model(self):
         try:
