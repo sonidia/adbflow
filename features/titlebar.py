@@ -64,13 +64,10 @@ def _ss(
         fs=fs, fw=fw, w=w, h=h, r=r,
     )
 
-# ── About dialog ──────────────────────────────────────────────────────────
 class AboutDialog(QDialog):
-    """Modal 'About' window with project info, author, and features list."""
-
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("About Fatan")
+        self.setWindowTitle("About")
         self.setMinimumWidth(460)
         self.setMaximumWidth(520)
         self.setStyleSheet("""
@@ -88,14 +85,14 @@ class AboutDialog(QDialog):
 
         body = QWidget()
         body_lay = QVBoxLayout(body)
-        body_lay.setContentsMargins(24, 20, 24, 20)
+        body_lay.setContentsMargins(14, 10, 14, 10)
         body_lay.setSpacing(14)
 
         def _section(title: str) -> QLabel:
             lbl = QLabel(title)
             lbl.setStyleSheet(
                 "color: #1a237e; font-weight: bold; font-size: 12px;"
-                " border-bottom: 1px solid #c5cae9; padding-bottom: 4px;"
+                " border-top: 1px solid #ddd;"
             )
             return lbl
 
@@ -106,19 +103,12 @@ class AboutDialog(QDialog):
             lbl.setOpenExternalLinks(True)
             return lbl
 
-        body_lay.addWidget(_section("📌 About the project"))
         body_lay.addWidget(_text(
-            "Fatan is an <b>Android Debugging Bridge Automation &amp; Management Tool</b> "
-            "built with Python and PySide6. It allows you to manage multiple "
+            "Fatan is an <b>Android Debugging Bridge Control Center &amp; Management Tool.</b> "
+            "It allows you to manage multiple "
             "Android devices simultaneously — run ads automation, control "
             "screen state, inspect system services, manage packages and files, "
             "all from one unified desktop interface."
-        ))
-
-        body_lay.addWidget(_section("👤 Author"))
-        body_lay.addWidget(_text(
-            "GitHub: <a href='https://github.com/thuongtruong109'>"
-            "thuongtruong109</a>"
         ))
 
         body_lay.addWidget(_section("✨ Features"))
@@ -148,6 +138,12 @@ class AboutDialog(QDialog):
         feat_lbl.setTextFormat(Qt.TextFormat.RichText)
         feat_lbl.setStyleSheet("font-size: 11px;")
         body_lay.addWidget(feat_lbl)
+
+        body_lay.addWidget(_section("👤 Author"))
+        body_lay.addWidget(_text(
+            "<a href='https://facebook.com/truong.poetic'>"
+            "Tran Nguyen Thuong Truong</a>"
+        ))
 
         b2 = QHBoxLayout()
         b2.addStretch()

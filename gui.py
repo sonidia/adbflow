@@ -220,6 +220,99 @@ class Worker(QThread):
             f'({repeat_count} iteration{"s" if repeat_count > 1 else ""}, {row_count} device{"s" if row_count > 1 else ""})'
         )
 
+# ── Screen toggle worker (on/off for all devices) ────────────────────────────
+class ScreenToggleWorker(QThread):
+    """Toggle screen on or off for a list of devices in a background thread."""
+    progress = Signal(str)
+    finished = Signal(str)
+
+    def __init__(self, serials: list, action: str):
+        super().__init__()
+        self.serials = serials          # list of adb serial strings
+        self.action  = action           # "on" | "off"
+
+    def _screen_is_on(self, serial: str) -> bool | None:
+        try:
+            out = subprocess.check_output(
+                ["adb", "-s", serial, "shell", "dumpsys", "power"],
+                text=True, stderr=subprocess.DEVNULL, startupinfo=_si,
+                timeout=10,
+            )
+            return "mWakefulness=Awake" in out or "mHoldingWakeLockSuspendBlocker=true" in out
+        except Exception:
+            return None
+
+    def run(self):
+        label   = "ON" if self.action == "on" else "OFF"
+        icon    = "💡" if self.action == "on" else "🌙"
+        success = 0
+        for serial in self.serials:
+            try:
+                is_on = self._screen_is_on(serial)
+                # Only send keyevent when state differs from desired
+                if (self.action == "on" and not is_on) or (self.action == "off" and is_on):
+                    subprocess.run(
+                        ["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                        check=True, stderr=subprocess.DEVNULL, startupinfo=_si,
+                        timeout=10,
+                    )
+                success += 1
+                self.progress.emit(f'✅ Screen {label}: {serial}')
+            except Exception as e:
+                self.progress.emit(f'❌ Error screen {label} {serial}: {str(e)}')
+        self.finished.emit(f'Screen {label} done: {success}/{len(self.serials)} devices')
+
+# ── scrcpy window finder worker ───────────────────────────────────────────────
+class ScrcpyFinderWorker(QThread):
+    """Poll for a Win32 window with the given title and emit its HWND."""
+    found     = Signal(int)   # HWND as Python int when window appears
+    not_found = Signal()
+
+    def __init__(self, title: str, timeout: float = 6.0):
+        super().__init__()
+        self.title   = title
+        self.timeout = timeout
+
+    def run(self):
+        if os.name != 'nt':
+            self.not_found.emit()
+            return
+        user32   = ctypes.windll.user32
+        deadline = time.time() + self.timeout
+        hwnd     = 0
+        while time.time() < deadline:
+            hwnd = user32.FindWindowW(None, ctypes.c_wchar_p(self.title))
+            if hwnd:
+                self.found.emit(hwnd)
+                return
+            time.sleep(0.12)
+        self.not_found.emit()
+
+# ── Generic single adb command worker ────────────────────────────────────────
+class AdbCommandWorker(QThread):
+    """Run one adb command in a background thread and emit stdout."""
+    result = Signal(str)   # stripped stdout on success
+    error  = Signal(str)   # error message on failure
+
+    def __init__(self, serial: str, *args: str, timeout: int = 10):
+        super().__init__()
+        self.serial  = serial
+        self.args    = args
+        self.timeout = timeout
+
+    def run(self):
+        try:
+            r = subprocess.run(
+                ["adb", "-s", self.serial, *self.args],
+                startupinfo=_si,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+            self.result.emit((r.stdout or "").strip())
+        except Exception as e:
+            self.error.emit(str(e))
+
 class PreviewOverlay(QWidget):
     """Transparent overlay on the preview_container that captures mouse clicks
     during hunt mode and translates them to device coordinates."""
@@ -407,7 +500,7 @@ class CookieLoaderGUI(QWidget):
         # Placeholder container — used only to measure position for the overlay window
         self.preview_container = QWidget()
         self.preview_container.setMinimumSize(300, 500)
-        self.preview_container.setStyleSheet("background: #111; border: 1px solid #555;")
+        self.preview_container.setStyleSheet("background: transparent; border: 1px solid #555;")
         pv_layout.addWidget(self.preview_container, 1)
 
         # Transparent overlay for hunt-mode coordinate capture
@@ -565,12 +658,12 @@ class CookieLoaderGUI(QWidget):
             pass
         self.ads_link_input.textChanged.connect(self._save_ads_links)
         ads_link_row.addWidget(self.ads_link_input)
-        self.ads_link_copy_btn = QPushButton("📋")
-        self.ads_link_copy_btn.setFixedSize(32, 32)
+        self.ads_link_copy_btn = QPushButton("📋 Copy")
+        self.ads_link_copy_btn.setFixedSize(70, 32)
         self.ads_link_copy_btn.setToolTip("Copy ads links to clipboard")
         self.ads_link_copy_btn.clicked.connect(self._copy_ads_link)
-        ads_link_clear_btn = QPushButton("🗑")
-        ads_link_clear_btn.setFixedSize(32, 32)
+        ads_link_clear_btn = QPushButton("🗑 Clear")
+        ads_link_clear_btn.setFixedSize(70, 32)
         ads_link_clear_btn.setToolTip("Clear ads links")
         ads_link_clear_btn.clicked.connect(self.ads_link_input.clear)
         from PySide6.QtWidgets import QVBoxLayout as _QVBoxLayout
@@ -1087,58 +1180,33 @@ class CookieLoaderGUI(QWidget):
         self.worker.finished.connect(self.on_worker_finished)
         self.worker.start()
 
-    def _get_screen_state(self, serial):
-        """Trả về True nếu màn hình đang ON, False nếu OFF."""
-        try:
-            out = subprocess.check_output(
-                ["adb", "-s", serial, "shell", "dumpsys", "power"],
-                text=True, stderr=subprocess.DEVNULL, startupinfo=_si
-            )
-            return "mWakefulness=Awake" in out or "mHoldingWakeLockSuspendBlocker=true" in out
-        except Exception:
-            return None
-
     def turn_screen_on_all(self):
-        """Bật màn hình tất cả devices (nếu đang tắt thì mở lên)."""
+        """Bật màn hình tất cả devices trong background thread."""
         serials = self._collect_serials()
         if not serials:
             self.update_status('No devices found')
             return
-        success = 0
-        for serial in serials:
-            try:
-                is_on = self._get_screen_state(serial)
-                if not is_on:
-                    subprocess.run(
-                        ["adb", "-s", serial, "shell", "input", "keyevent", "26"],
-                        check=True, stderr=subprocess.DEVNULL, startupinfo=_si
-                    )
-                success += 1
-                self.update_status(f'✅ Screen ON: {serial}')
-            except Exception as e:
-                self.update_status(f'❌ Error screen ON {serial}: {str(e)}')
-        self.update_status(f'Screen ON done: {success}/{len(serials)} devices')
+        w = ScreenToggleWorker(serials, "on")
+        w.progress.connect(self.update_status)
+        w.finished.connect(self.update_status)
+        w.finished.connect(lambda _: w.deleteLater())
+        w.start()
+        self._screen_workers = getattr(self, '_screen_workers', [])
+        self._screen_workers.append(w)
 
     def turn_screen_off_all(self):
-        """Tắt màn hình tất cả devices (nếu đang bật thì tắt đi)."""
+        """Tắt màn hình tất cả devices trong background thread."""
         serials = self._collect_serials()
         if not serials:
             self.update_status('No devices found')
             return
-        success = 0
-        for serial in serials:
-            try:
-                is_on = self._get_screen_state(serial)
-                if is_on:
-                    subprocess.run(
-                        ["adb", "-s", serial, "shell", "input", "keyevent", "26"],
-                        check=True, stderr=subprocess.DEVNULL, startupinfo=_si
-                    )
-                success += 1
-                self.update_status(f'✅ Screen OFF: {serial}')
-            except Exception as e:
-                self.update_status(f'❌ Error screen OFF {serial}: {str(e)}')
-        self.update_status(f'Screen OFF done: {success}/{len(serials)} devices')
+        w = ScreenToggleWorker(serials, "off")
+        w.progress.connect(self.update_status)
+        w.finished.connect(self.update_status)
+        w.finished.connect(lambda _: w.deleteLater())
+        w.start()
+        self._screen_workers = getattr(self, '_screen_workers', [])
+        self._screen_workers.append(w)
 
     def _collect_serials(self):
         table_data = self.ads_table.get_table_data()
@@ -1243,34 +1311,36 @@ class CookieLoaderGUI(QWidget):
             self.update_status(f'❌ Error opening preview for {serial}: {e}')
 
     def _find_and_position_scrcpy(self, title: str, timeout: float = 6.0):
-        """Poll for the scrcpy HWND, strip its caption, then overlay it on
-        preview_container.  We use WS_POPUP (not WS_CHILD) so the window keeps
-        its own message loop and mouse/touch input continues to work correctly.
+        """Launch ScrcpyFinderWorker to poll for the HWND in background.
+        Win32 style stripping and positioning happen on the main thread
+        once the HWND is found, so GUI input is never blocked.
         """
         if os.name != 'nt':
             return
 
-        user32 = ctypes.windll.user32
-        deadline = time.time() + timeout
-        hwnd = 0
-        while time.time() < deadline:
-            hwnd = user32.FindWindowW(None, ctypes.c_wchar_p(title))
-            if hwnd:
-                break
-            time.sleep(0.12)
+        finder = ScrcpyFinderWorker(title, timeout)
+        # Keep reference so it isn't GC'd before finishing
+        self._scrcpy_finder = finder
+        finder.found.connect(self._apply_scrcpy_style_and_position)
+        finder.not_found.connect(
+            lambda: self.update_status('⚠️ Could not find scrcpy window to position')
+        )
+        finder.not_found.connect(finder.deleteLater)
+        finder.start()
 
-        if not hwnd:
-            self.update_status('⚠️ Could not find scrcpy window to position')
-            return
-
+    def _apply_scrcpy_style_and_position(self, hwnd: int):
+        """Strip title bar from the scrcpy window and start position-sync timer.
+        Called on the main thread via signal from ScrcpyFinderWorker.
+        """
         # Strip title bar / resize border; keep WS_POPUP so input is not broken
-        GWL_STYLE    = -16
-        WS_POPUP     = 0x80000000
-        WS_VISIBLE   = 0x10000000
-        WS_CAPTION   = 0x00C00000   # title bar (WS_BORDER | WS_DLGFRAME)
-        WS_THICKFRAME = 0x00040000  # resize grip
+        GWL_STYLE     = -16
+        WS_POPUP      = 0x80000000
+        WS_VISIBLE    = 0x10000000
+        WS_CAPTION    = 0x00C00000   # title bar (WS_BORDER | WS_DLGFRAME)
+        WS_THICKFRAME = 0x00040000   # resize grip
 
         try:
+            user32 = ctypes.windll.user32
             style = user32.GetWindowLongW(hwnd, GWL_STYLE)
             style = (style | WS_POPUP | WS_VISIBLE) & ~(WS_CAPTION | WS_THICKFRAME)
             user32.SetWindowLongW(hwnd, GWL_STYLE, style)
@@ -1281,6 +1351,10 @@ class CookieLoaderGUI(QWidget):
         self._reposition_scrcpy()
         # Keep syncing position as the main window moves / resizes
         self._reposition_timer.start()
+        # Clean up finder worker
+        if hasattr(self, '_scrcpy_finder'):
+            self._scrcpy_finder.deleteLater()
+            self._scrcpy_finder = None
 
     def _reposition_scrcpy(self):
         """Move/resize the scrcpy popup to exactly cover preview_container."""
@@ -1356,41 +1430,60 @@ class CookieLoaderGUI(QWidget):
             self.update_status("⚠ No device in preview to rotate")
             return
         self._rotation_state = 1 - self._rotation_state
-        label = "landscape 🌄" if self._rotation_state == 1 else "portrait 📱"
-        try:
-            subprocess.run(
-                ["adb", "-s", self._current_preview_serial, "shell",
-                 "settings", "put", "system", "user_rotation", str(self._rotation_state)],
-                startupinfo=_si, timeout=5,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            self._rotate_btn.setText("🔄 Portrait 📱" if self._rotation_state == 0 else "🔄 Landscape 🌄")
-            self.update_status(f"🔄 Rotated to {label}: {self._current_preview_serial}")
-        except Exception as e:
-            self.update_status(f"❌ Rotate failed: {e}")
+        rot_val = str(self._rotation_state)
+        label   = "landscape 🌄" if self._rotation_state == 1 else "portrait 📱"
+        serial  = self._current_preview_serial
+        # Update button label immediately for responsive feel
+        self._rotate_btn.setText("🔄 Portrait 📱" if self._rotation_state == 0 else "🔄 Landscape 🌄")
+        self.update_status(f"🔄 Rotating to {label}: {serial}…")
+
+        rot_worker = AdbCommandWorker(
+            serial, "shell", "settings", "put", "system", "user_rotation", rot_val,
+            timeout=5,
+        )
+        # Capture loop variables in default args to avoid closure issues
+        rot_worker.result.connect(
+            lambda _, s=serial, l=label:
+                self.update_status(f"🔄 Rotated to {l}: {s}")
+        )
+        rot_worker.error.connect(
+            lambda e: self.update_status(f"❌ Rotate failed: {e}")
+        )
+        rot_worker.finished.connect(rot_worker.deleteLater)
+        rot_worker.start()
+        self._rot_worker = rot_worker   # keep reference until done
 
     def _on_hunt_mode_changed(self, active: bool):
         """Show/hide the transparent overlay on the preview container for hunt mode."""
-        dev_w = dev_h = 0
-        if active and self._current_preview_serial:
-            # Try to get device resolution via ADB
-            try:
-                r = subprocess.run(
-                    ["adb", "-s", self._current_preview_serial, "shell", "wm", "size"],
-                    capture_output=True, text=True, startupinfo=_si, timeout=5,
-                )
-                import re as _re
-                m = _re.search(r"(\d+)x(\d+)", r.stdout)
-                if m:
-                    dev_w, dev_h = int(m.group(1)), int(m.group(2))
-            except Exception:
-                pass
-        # Size overlay to cover the container
+        # Always update overlay geometry and active state immediately
         self._preview_overlay.setGeometry(self.preview_container.rect())
-        self._preview_overlay.set_active(active, dev_w, dev_h)
         self._preview_overlay.raise_()
         if active and not self.preview_panel.isVisible():
             self.update_status("⚠ Open the phone preview first, then tap on it")
+
+        if not active or not self._current_preview_serial:
+            # Disable overlay right away (no resolution needed)
+            self._preview_overlay.set_active(False)
+            return
+
+        # Activate overlay with 0 dimensions first (falls back to widget coords)
+        self._preview_overlay.set_active(True, 0, 0)
+
+        # Fetch device resolution in background to refine coordinate mapping
+        serial = self._current_preview_serial
+        res_worker = AdbCommandWorker(serial, "shell", "wm", "size", timeout=5)
+
+        def _on_resolution(stdout: str):
+            import re as _re
+            m = _re.search(r"(\d+)x(\d+)", stdout)
+            if m and self._current_preview_serial == serial:
+                dev_w, dev_h = int(m.group(1)), int(m.group(2))
+                self._preview_overlay.set_active(True, dev_w, dev_h)
+
+        res_worker.result.connect(_on_resolution)
+        res_worker.finished.connect(res_worker.deleteLater)
+        res_worker.start()
+        self._res_worker = res_worker   # keep reference until done
 
     def _on_preview_click_for_hunt(self, dev_x: int, dev_y: int):
         """Forward a preview-window click as a hunt coordinate to the actions widget."""

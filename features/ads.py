@@ -239,7 +239,7 @@ class AdsLinkWidget(QWidget):
         layout.addWidget(self.link_input)
 
         # Copy button
-        self.copy_button = QPushButton("📋")
+        self.copy_button = QPushButton("📋 Copy")
         self.copy_button.setFixedSize(32, 32)
         self.copy_button.setToolTip("Copy link to clipboard")
         self.copy_button.clicked.connect(self.copy_link)

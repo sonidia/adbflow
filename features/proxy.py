@@ -154,7 +154,16 @@ class ProxyWidget(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(0)
+
+        # Scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner_vl = QVBoxLayout(inner)
+        inner_vl.setContentsMargins(0, 0, 4, 0)
+        inner_vl.setSpacing(14)
 
         # ── Global proxy config form ─────────────────────────────────────
         cfg_group = QGroupBox("🌐 Configuration")
@@ -369,7 +378,7 @@ class ProxyWidget(QWidget):
 
         cfg_layout.addLayout(btn_row)
         cfg_group.setLayout(cfg_layout)
-        root.addWidget(cfg_group)
+        inner_vl.addWidget(cfg_group)
 
         # ── Port Forward / Reverse ────────────────────────────────────────
         _PORT_GROUP_SS = """
@@ -527,7 +536,7 @@ class ProxyWidget(QWidget):
         port_vl.addWidget(self._port_status_lbl)
 
         port_group.setLayout(port_vl)
-        root.addWidget(port_group)
+        inner_vl.addWidget(port_group)
 
         # ── Ping / Proxy Test ─────────────────────────────────────────────
         _GROUP_SS = """
@@ -681,11 +690,15 @@ class ProxyWidget(QWidget):
         ping_vl.addWidget(self._ping_summary_lbl)
 
         ping_group.setLayout(ping_vl)
-        root.addWidget(ping_group)
+        inner_vl.addWidget(ping_group)
 
         self._ping_worker: "_PingWorker | None" = None
 
-        root.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        inner_vl.addSpacing(0)
+        inner_vl.addStretch()
+
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
 
         # Initial UI state
         self._on_type_changed(0)

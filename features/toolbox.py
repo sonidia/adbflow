@@ -204,17 +204,16 @@ _BTN_OFF_SS = (
     "QPushButton:disabled { background: #f5f5f5; color: #aaa; }"
 )
 
-
 def _make_card_btn(emoji: str, label: str, accent: str = "#1976d2") -> QPushButton:
     """Create a card-style button: large emoji on top, text label below."""
     btn = QPushButton()
-    btn.setFixedSize(90, 88)
+    btn.setFixedSize(82, 80)
     btn.setStyleSheet(_CARD_SS.format(accent=accent))
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
     # Overlay a transparent child widget that holds the layout
     inner = QWidget(btn)
-    inner.setGeometry(0, 0, 90, 88)
+    inner.setGeometry(0, 0, 82, 80)
     inner.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     vl = QVBoxLayout(inner)
@@ -243,8 +242,6 @@ def _make_card_btn(emoji: str, label: str, accent: str = "#1976d2") -> QPushButt
 
     return btn
 
-
-
 _LABEL_SS_PS = "color: #555; font-size: 11px; font-weight: bold;"
 _INPUT_SS_PS = (
     "QLineEdit {"
@@ -270,7 +267,6 @@ _BTN_PRIMARY_SS = (
     "QPushButton:disabled { background-color: #90caf9; }"
 )
 _CB_SS_PS = "QCheckBox { font-size: 11px; color: #333; }"
-
 
 class ToolboxWidget(QWidget):
     status_update = Signal(str)
@@ -340,7 +336,7 @@ class ToolboxWidget(QWidget):
 
         # Header
         hdr = QHBoxLayout()
-        self._device_lbl = QLabel("📱  No device selected")
+        self._device_lbl = QLabel("📱 No device selected")
         self._device_lbl.setStyleSheet("font-weight: bold; color: #aaa; font-size: 12px;")
         hdr.addWidget(self._device_lbl, 1)
         root.addLayout(hdr)
@@ -363,7 +359,7 @@ class ToolboxWidget(QWidget):
 
         self._reboot_buttons: list[QPushButton] = []
 
-        COLS = 7
+        COLS = 8
         for idx, (emoji, label, mode, accent) in enumerate(self._REBOOT_MODES):
             btn = _make_card_btn(emoji, label, accent)
             btn.setProperty("accent", accent)
@@ -381,7 +377,7 @@ class ToolboxWidget(QWidget):
         actions_group = QGroupBox("🛠 Device Actions")
         actions_group.setStyleSheet(_GROUP_ACTIONS_SS)
         actions_vl = QVBoxLayout()
-        actions_vl.setContentsMargins(12, 10, 12, 10)
+        actions_vl.setContentsMargins(12, 10, 12, 0)
         actions_vl.setSpacing(8)
 
         _action_btns = []

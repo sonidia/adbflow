@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFileDialog, QProgressBar,
-    QSplitter, QFrame, QTextEdit,
+    QSplitter, QFrame, QTextEdit, QScrollArea,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QFont
@@ -220,8 +220,8 @@ class FilesWidget(QWidget):
     # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         # Header row
         hdr = QHBoxLayout()
@@ -230,7 +230,18 @@ class FilesWidget(QWidget):
             "font-weight: bold; color: #1565c0; font-size: 12px;"
         )
         hdr.addWidget(self._serial_label, 1)
-        root.addLayout(hdr)
+        hdr_widget = QWidget()
+        hdr_widget.setLayout(hdr)
+        root.addWidget(hdr_widget)
+
+        # Scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner_vl = QVBoxLayout(inner)
+        inner_vl.setContentsMargins(6, 6, 4, 6)
+        inner_vl.setSpacing(6)
 
         # ── Section 1: Push PC → Device ───────────────────────────────
         push_group = QGroupBox("📤 Push  (PC → Device)")
@@ -286,7 +297,7 @@ class FilesWidget(QWidget):
         push_vl.addLayout(row_dst)
 
         push_group.setLayout(push_vl)
-        root.addWidget(push_group)
+        inner_vl.addWidget(push_group)
 
         # ── Section 2: Pull Device → PC ───────────────────────────────
         pull_group = QGroupBox("📥 Pull  (Device → PC)")
@@ -335,7 +346,7 @@ class FilesWidget(QWidget):
         pull_vl.addLayout(row_ddst)
 
         pull_group.setLayout(pull_vl)
-        root.addWidget(pull_group)
+        inner_vl.addWidget(pull_group)
 
         # ── Section 3: Device File Browser ────────────────────────────
         browser_group = QGroupBox("🗂 Device File Browser")
@@ -469,7 +480,7 @@ class FilesWidget(QWidget):
 
         browser_vl.addLayout(sel_row)
         browser_group.setLayout(browser_vl)
-        root.addWidget(browser_group, 1)
+        inner_vl.addWidget(browser_group, 1)
 
         # ── Transfer log ──────────────────────────────────────────────
         log_group = QGroupBox("📋 Transfer Log")
@@ -502,7 +513,11 @@ class FilesWidget(QWidget):
         log_vl.addLayout(clr_row)
 
         log_group.setLayout(log_vl)
-        root.addWidget(log_group)
+        inner_vl.addWidget(log_group)
+
+        inner_vl.addStretch()
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
 
     # ── Helpers ───────────────────────────────────────────────────────────
     def _log_msg(self, msg: str):
