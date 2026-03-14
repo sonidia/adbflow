@@ -461,6 +461,16 @@ class CookieLoaderGUI(QWidget):
         self.actions_button.clicked.connect(lambda: self._open_tab(4))
         left_layout.addWidget(self.actions_button)
 
+        self.run_ads_button = QPushButton('▶ Run Ads')
+        self.run_ads_button.clicked.connect(self.run_ads_for_all)
+        self.simulator_button = _nav_btn('🤖 Simulator')
+        self.simulator_button.clicked.connect(lambda: self._open_tab(0))
+        left_layout.addWidget(self.simulator_button)
+
+        self.proxy_button = _nav_btn('🔗 Proxy')
+        self.proxy_button.clicked.connect(lambda: self._open_tab(1))
+        left_layout.addWidget(self.proxy_button)
+
         self.pkgs_button = _nav_btn('📦 Packages')
         self.pkgs_button.clicked.connect(lambda: self._open_tab(5))
         left_layout.addWidget(self.pkgs_button)
@@ -480,17 +490,6 @@ class CookieLoaderGUI(QWidget):
         self.services_button = _nav_btn('⚙ Services')
         self.services_button.clicked.connect(lambda: self._open_tab(9))
         left_layout.addWidget(self.services_button)
-
-        self.run_ads_button = QPushButton('▶ Run Ads')
-        self.run_ads_button.clicked.connect(self.run_ads_for_all)
-
-        self.simulator_button = _nav_btn('🤖 Simulator')
-        self.simulator_button.clicked.connect(lambda: self._open_tab(0))
-        left_layout.addWidget(self.simulator_button)
-
-        self.proxy_button = _nav_btn('🔗 Proxy')
-        self.proxy_button.clicked.connect(lambda: self._open_tab(1))
-        left_layout.addWidget(self.proxy_button)
 
         self.settings_button = _nav_btn('⚙️ Settings')
         self.settings_button.clicked.connect(lambda: self._open_tab(2))
