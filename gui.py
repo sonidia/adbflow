@@ -34,6 +34,7 @@ from features.toolbox import ToolboxWidget
 from features.titlebar import TitleBar
 from features.services import ServicesWidget
 
+
 class Worker(QThread):
     progress = Signal(str)
     finished = Signal(str)
@@ -495,6 +496,7 @@ class CookieLoaderGUI(QWidget):
         self.settings_button.clicked.connect(lambda: self._open_tab(2))
         left_layout.addWidget(self.settings_button)
 
+
         # ── Right content panel ──────────────────────────────────────────
         right_panel = QWidget()
         right_layout = QVBoxLayout()
@@ -721,6 +723,7 @@ class CookieLoaderGUI(QWidget):
         # Page 9 – Services     # index 9
         self.tab_body.addWidget(self.services_widget)
 
+
         right_layout.addWidget(self.tab_body)
 
         layout.addWidget(left_panel)
@@ -771,6 +774,7 @@ class CookieLoaderGUI(QWidget):
             self.activities_button,
             self.toolbox_button,
             self.services_button,
+
         ]
         self.current_active_tab = _tab_buttons[index]
         self.current_active_tab.setChecked(True)

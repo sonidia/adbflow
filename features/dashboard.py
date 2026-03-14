@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor
+from features.widgets.wifi import WifiWidget
 
 _si = subprocess.STARTUPINFO()
 _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -837,6 +838,14 @@ class DashboardWidget(QWidget):
         props_vl.addLayout(props_grid)
         props_group.setLayout(props_vl)
         inner_vl.addWidget(props_group)
+
+        # -- Wifi Section --
+        wifi_group = QGroupBox("📶 Wifi")
+        wifi_group.setStyleSheet(_GROUP_SS)
+        wifi_layout = QVBoxLayout(wifi_group)
+        self.wifi_widget = WifiWidget()
+        wifi_layout.addWidget(self.wifi_widget)
+        inner_vl.addWidget(wifi_group)
 
         # ── Live Device Metrics ───────────────────────────────────────────
         metrics_group = QGroupBox("📈 Live Device Metrics")
